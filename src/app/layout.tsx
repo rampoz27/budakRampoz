@@ -1,0 +1,47 @@
+import React from 'react';
+import type { Metadata, Viewport } from 'next';
+import { Geist, Geist_Mono } from 'next/font/google';
+import '../styles/tailwind.css';
+
+const geist = Geist({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-geist',
+  display: 'swap',
+});
+
+const geistMono = Geist_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-jetbrains-mono',
+  display: 'swap',
+});
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+};
+
+export const metadata: Metadata = {
+  title: 'CodeMind — AI Coding Assistant for Developers',
+  description: 'CodeMind helps developers debug, brainstorm, and ship faster with multi-model AI, syntax-highlighted code responses, and project-organized chat history.',
+  icons: {
+    icon: [{ url: '/favicon.ico', type: 'image/x-icon' }],
+  },
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en" className={`${geist.variable} ${geistMono.variable} dark`}>
+      <body className={geist.className}>
+        {children}
+      
+      <script type="module" async src="https://static.rocket.new/rocket-web.js?_cfg=https%3A%2F%2Fcodemind4613back.builtwithrocket.new&_be=https%3A%2F%2Fappanalytics.rocket.new&_v=0.1.20" />
+      <script type="module" defer src="https://static.rocket.new/rocket-shot.js?v=0.0.2" /></body>
+    </html>
+  );
+}
