@@ -30,6 +30,12 @@ export default function LoginForm({ onSwitchToRegister }: LoginFormProps) {
     defaultValues: { email: '', password: '', rememberMe: false },
   });
 
+  // Forgot-password mini-flow, inline in the same card.
+  const [mode, setMode] = useState<'login' | 'forgot'>('login');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [resetError, setResetError] = useState('');
+
   const onSubmit = async (data: LoginFormData) => {
     setIsLoading(true);
 
@@ -48,6 +54,118 @@ export default function LoginForm({ onSwitchToRegister }: LoginFormProps) {
     router.push('/ai-chat-interface');
     router.refresh();
   };
+
+  async function handleSendResetLink(e: React.FormEvent) {
+    e.preventDefault();
+    setResetError('');
+
+    if (!resetEmail.trim()) {
+      setResetState('error');
+      setResetError('Enter your email first.');
+      return;
+    }
+
+    setResetState('sending');
+
+    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail.trim(), {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+
+    if (error) {
+      setResetState('error');
+      setResetError(error.message);
+      return;
+    }
+
+    setResetState('sent');
+  }
+
+  function backToLogin() {
+    setMode('login');
+    setResetState('idle');
+    setResetError('');
+    setResetEmail('');
+  }
+
+  if (mode === 'forgot') {
+    return (
+      <div className="fade-in">
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-foreground mb-1">Reset your password</h2>
+          <p className="text-secondary-foreground text-sm">
+            Enter your email and we&apos;ll send you a reset link.
+          </p>
+        </div>
+
+        {resetState === 'sent' ? (
+          <div className="text-center py-6">
+            <div className="w-14 h-14 rounded-2xl bg-positive/10 mx-auto mb-4 flex items-center justify-center">
+              <Icon name="EnvelopeIcon" size={24} className="text-positive" />
+            </div>
+            <h3 className="text-base font-semibold text-foreground mb-1">Check your inbox</h3>
+            <p className="text-sm text-secondary-foreground mb-6">
+              We sent a password reset link to <span className="font-medium text-foreground">{resetEmail}</span>.
+            </p>
+            <button
+              type="button"
+              onClick={backToLogin}
+              className="text-primary hover:text-primary/80 font-medium text-sm transition-colors"
+            >
+              Back to sign in
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSendResetLink} className="space-y-4">
+            {resetState === 'error' && (
+              <div className="flex items-start gap-2 bg-negative/10 border border-negative/30 rounded-lg px-3 py-2.5">
+                <Icon name="ExclamationCircleIcon" size={16} className="text-negative flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-negative">{resetError}</p>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5" htmlFor="reset-email">
+                Email address
+              </label>
+              <input
+                id="reset-email"
+                type="email"
+                autoComplete="email"
+                placeholder="you@domain.com"
+                value={resetEmail}
+                onChange={(e) => setResetEmail(e.target.value)}
+                className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-all duration-150 focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={resetState === 'sending'}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-primary text-white font-semibold rounded-lg px-4 py-3 text-sm transition-all duration-150 hover:opacity-90 active:scale-95 disabled:opacity-60"
+              style={{ minHeight: '44px' }}
+            >
+              {resetState === 'sending' ? (
+                <>
+                  <Icon name="ArrowPathIcon" size={16} className="animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                'Send reset link'
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={backToLogin}
+              className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Back to sign in
+            </button>
+          </form>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="fade-in">
@@ -94,7 +212,11 @@ export default function LoginForm({ onSwitchToRegister }: LoginFormProps) {
             <label className="text-sm font-medium text-foreground" htmlFor="login-password">
               Password
             </label>
-            <button type="button" className="text-xs text-primary hover:text-primary/80 transition-colors">
+            <button
+              type="button"
+              onClick={() => setMode('forgot')}
+              className="text-xs text-primary hover:text-primary/80 transition-colors"
+            >
               Forgot password?
             </button>
           </div>
