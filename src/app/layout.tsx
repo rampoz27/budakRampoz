@@ -23,8 +23,8 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'CodeMind — AI Coding Assistant for Developers',
-  description: 'CodeMind helps developers debug, brainstorm, and ship faster with multi-model AI, syntax-highlighted code responses, and project-organized chat history.',
+  title: 'Budak Suruhnya Rampoz',
+  description: 'Isinya cuma alat alat buat mempermudah rampoz kerja. Gak Lebih',
   icons: {
     icon: [{ url: '/favicon.ico', type: 'image/x-icon' }],
   },
