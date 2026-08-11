@@ -5,6 +5,14 @@ import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import Icon from '@/components/ui/AppIcon';
 import { supabase } from '@/lib/supabase/client';
+import {
+  fetchAiSettings,
+  saveAiSettings,
+  TONE_OPTIONS,
+  THINKING_STYLE_OPTIONS,
+  type Tone,
+  type ThinkingStyle,
+} from '@/lib/supabase/ai-settings';
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -29,12 +37,20 @@ export default function SettingsWorkspace() {
   const [passwordState, setPasswordState] = useState<SaveState>('idle');
   const [passwordError, setPasswordError] = useState('');
 
+  // AI Personality
+  const [tone, setTone] = useState<Tone>('friendly');
+  const [thinkingStyle, setThinkingStyle] = useState<ThinkingStyle>('concise');
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [personaState, setPersonaState] = useState<SaveState>('idle');
+  const [personaError, setPersonaError] = useState('');
+
   const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
 
-    supabase.auth.getUser().then(({ data, error }) => {
+    async function load() {
+      const { data, error } = await supabase.auth.getUser();
       if (!isMounted) return;
       if (error || !data.user) {
         router.push('/');
@@ -44,7 +60,20 @@ export default function SettingsWorkspace() {
       setFullName((data.user.user_metadata?.full_name as string) || '');
       setEmail(data.user.email || '');
       setLoadingUser(false);
-    });
+
+      try {
+        const persona = await fetchAiSettings();
+        if (persona && isMounted) {
+          setTone(persona.tone);
+          setThinkingStyle(persona.thinking_style);
+          setCustomInstructions(persona.custom_instructions);
+        }
+      } catch (err) {
+        console.error('Failed to load AI settings', err);
+      }
+    }
+
+    load();
 
     return () => {
       isMounted = false;
@@ -126,6 +155,21 @@ export default function SettingsWorkspace() {
     setTimeout(() => setPasswordState('idle'), 2000);
   }
 
+  async function handleSavePersona(e: React.FormEvent) {
+    e.preventDefault();
+    setPersonaState('saving');
+    setPersonaError('');
+
+    try {
+      await saveAiSettings({ tone, thinking_style: thinkingStyle, custom_instructions: customInstructions });
+      setPersonaState('saved');
+      setTimeout(() => setPersonaState('idle'), 2000);
+    } catch (err) {
+      setPersonaState('error');
+      setPersonaError(err instanceof Error ? err.message : 'Failed to save.');
+    }
+  }
+
   async function handleSignOut() {
     setSigningOut(true);
     await supabase.auth.signOut();
@@ -180,6 +224,87 @@ export default function SettingsWorkspace() {
             >
               {nameState === 'saving' && <Icon name="ArrowPathIcon" size={14} className="animate-spin" />}
               {nameState === 'saved' ? 'Saved ✓' : 'Save name'}
+            </button>
+          </form>
+        </div>
+
+        {/* AI Personality card */}
+        <div className="bg-card border border-border rounded-xl p-5 mb-5">
+          <h2 className="text-sm font-semibold text-foreground mb-1">AI Personality</h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            This shapes how the AI replies — it stays the same no matter which model you pick.
+          </p>
+
+          <form onSubmit={handleSavePersona} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">Tone</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {TONE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setTone(option.value)}
+                    className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
+                      tone === option.value
+                        ? 'border-primary bg-primary/10'
+                        : 'border-border hover:border-primary/40'
+                    }`}
+                  >
+                    <p className={`text-xs font-semibold ${tone === option.value ? 'text-primary' : 'text-foreground'}`}>
+                      {option.label}
+                    </p>
+                    <p className="text-2xs text-muted-foreground mt-0.5">{option.description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">Thinking style</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {THINKING_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setThinkingStyle(option.value)}
+                    className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
+                      thinkingStyle === option.value
+                        ? 'border-primary bg-primary/10'
+                        : 'border-border hover:border-primary/40'
+                    }`}
+                  >
+                    <p className={`text-xs font-semibold ${thinkingStyle === option.value ? 'text-primary' : 'text-foreground'}`}>
+                      {option.label}
+                    </p>
+                    <p className="text-2xs text-muted-foreground mt-0.5">{option.description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5" htmlFor="custom-instructions">
+                Anything else the AI should always keep in mind?
+              </label>
+              <textarea
+                id="custom-instructions"
+                value={customInstructions}
+                onChange={(e) => setCustomInstructions(e.target.value)}
+                rows={3}
+                placeholder="e.g. Always suggest tests for new functions. Prefer functional over class components."
+                className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all resize-y"
+              />
+            </div>
+
+            {personaError && <p className="text-xs text-negative">{personaError}</p>}
+
+            <button
+              type="submit"
+              disabled={personaState === 'saving'}
+              className="flex items-center gap-2 bg-primary text-primary-foreground text-sm font-semibold px-4 py-2 rounded-lg hover:opacity-90 active:scale-95 transition-all disabled:opacity-60"
+            >
+              {personaState === 'saving' && <Icon name="ArrowPathIcon" size={14} className="animate-spin" />}
+              {personaState === 'saved' ? 'Saved ✓' : 'Save personality'}
             </button>
           </form>
         </div>
