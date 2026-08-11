@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import Icon from '@/components/ui/AppIcon';
 import { supabase } from '@/lib/supabase/client';
+import { AI_MODELS } from '@/lib/models';
 import {
-  fetchAiSettings,
-  saveAiSettings,
+  fetchPersonaForModel,
+  savePersonaForModel,
   TONE_OPTIONS,
   THINKING_STYLE_OPTIONS,
   type Tone,
@@ -37,10 +38,12 @@ export default function SettingsWorkspace() {
   const [passwordState, setPasswordState] = useState<SaveState>('idle');
   const [passwordError, setPasswordError] = useState('');
 
-  // AI Personality
+  // AI Personality — now per model
+  const [personaModelId, setPersonaModelId] = useState(AI_MODELS[0]?.id ?? '');
   const [tone, setTone] = useState<Tone>('friendly');
   const [thinkingStyle, setThinkingStyle] = useState<ThinkingStyle>('concise');
   const [customInstructions, setCustomInstructions] = useState('');
+  const [isLoadingPersona, setIsLoadingPersona] = useState(false);
   const [personaState, setPersonaState] = useState<SaveState>('idle');
   const [personaError, setPersonaError] = useState('');
 
@@ -60,17 +63,6 @@ export default function SettingsWorkspace() {
       setFullName((data.user.user_metadata?.full_name as string) || '');
       setEmail(data.user.email || '');
       setLoadingUser(false);
-
-      try {
-        const persona = await fetchAiSettings();
-        if (persona && isMounted) {
-          setTone(persona.tone);
-          setThinkingStyle(persona.thinking_style);
-          setCustomInstructions(persona.custom_instructions);
-        }
-      } catch (err) {
-        console.error('Failed to load AI settings', err);
-      }
     }
 
     load();
@@ -79,6 +71,30 @@ export default function SettingsWorkspace() {
       isMounted = false;
     };
   }, [router]);
+
+  // Load the selected model's persona whenever the model picker changes.
+  useEffect(() => {
+    if (!personaModelId) return;
+    let isCancelled = false;
+    setIsLoadingPersona(true);
+    setPersonaState('idle');
+
+    fetchPersonaForModel(personaModelId)
+      .then((persona) => {
+        if (isCancelled) return;
+        setTone(persona.tone);
+        setThinkingStyle(persona.thinking_style);
+        setCustomInstructions(persona.custom_instructions);
+      })
+      .catch((err) => console.error('Failed to load persona', err))
+      .finally(() => {
+        if (!isCancelled) setIsLoadingPersona(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [personaModelId]);
 
   const initials = (fullName || email || 'U')
     .split(' ')
@@ -161,7 +177,11 @@ export default function SettingsWorkspace() {
     setPersonaError('');
 
     try {
-      await saveAiSettings({ tone, thinking_style: thinkingStyle, custom_instructions: customInstructions });
+      await savePersonaForModel(personaModelId, {
+        tone,
+        thinking_style: thinkingStyle,
+        custom_instructions: customInstructions,
+      });
       setPersonaState('saved');
       setTimeout(() => setPersonaState('idle'), 2000);
     } catch (err) {
@@ -228,85 +248,110 @@ export default function SettingsWorkspace() {
           </form>
         </div>
 
-        {/* AI Personality card */}
+        {/* AI Personality card — now per model */}
         <div className="bg-card border border-border rounded-xl p-5 mb-5">
           <h2 className="text-sm font-semibold text-foreground mb-1">AI Personality</h2>
           <p className="text-xs text-muted-foreground mb-4">
-            This shapes how the AI replies — it stays the same no matter which model you pick.
+            Each model can have its own personality. Switch models mid-chat and the reply style switches with it.
           </p>
 
-          <form onSubmit={handleSavePersona} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Tone</label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {TONE_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setTone(option.value)}
-                    className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
-                      tone === option.value
-                        ? 'border-primary bg-primary/10'
-                        : 'border-border hover:border-primary/40'
-                    }`}
-                  >
-                    <p className={`text-xs font-semibold ${tone === option.value ? 'text-primary' : 'text-foreground'}`}>
-                      {option.label}
-                    </p>
-                    <p className="text-2xs text-muted-foreground mt-0.5">{option.description}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Thinking style</label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {THINKING_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setThinkingStyle(option.value)}
-                    className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
-                      thinkingStyle === option.value
-                        ? 'border-primary bg-primary/10'
-                        : 'border-border hover:border-primary/40'
-                    }`}
-                  >
-                    <p className={`text-xs font-semibold ${thinkingStyle === option.value ? 'text-primary' : 'text-foreground'}`}>
-                      {option.label}
-                    </p>
-                    <p className="text-2xs text-muted-foreground mt-0.5">{option.description}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1.5" htmlFor="custom-instructions">
-                Anything else the AI should always keep in mind?
-              </label>
-              <textarea
-                id="custom-instructions"
-                value={customInstructions}
-                onChange={(e) => setCustomInstructions(e.target.value)}
-                rows={3}
-                placeholder="e.g. Always suggest tests for new functions. Prefer functional over class components."
-                className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all resize-y"
-              />
-            </div>
-
-            {personaError && <p className="text-xs text-negative">{personaError}</p>}
-
-            <button
-              type="submit"
-              disabled={personaState === 'saving'}
-              className="flex items-center gap-2 bg-primary text-primary-foreground text-sm font-semibold px-4 py-2 rounded-lg hover:opacity-90 active:scale-95 transition-all disabled:opacity-60"
+          {/* Model picker */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-foreground mb-1.5" htmlFor="persona-model">
+              Configuring
+            </label>
+            <select
+              id="persona-model"
+              value={personaModelId}
+              onChange={(e) => setPersonaModelId(e.target.value)}
+              className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer"
             >
-              {personaState === 'saving' && <Icon name="ArrowPathIcon" size={14} className="animate-spin" />}
-              {personaState === 'saved' ? 'Saved ✓' : 'Save personality'}
-            </button>
-          </form>
+              {AI_MODELS.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name} ({model.provider})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {isLoadingPersona ? (
+            <div className="flex items-center justify-center py-8">
+              <Icon name="ArrowPathIcon" size={18} className="text-muted-foreground animate-spin" />
+            </div>
+          ) : (
+            <form onSubmit={handleSavePersona} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Tone</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {TONE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setTone(option.value)}
+                      className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
+                        tone === option.value
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border hover:border-primary/40'
+                      }`}
+                    >
+                      <p className={`text-xs font-semibold ${tone === option.value ? 'text-primary' : 'text-foreground'}`}>
+                        {option.label}
+                      </p>
+                      <p className="text-2xs text-muted-foreground mt-0.5">{option.description}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Thinking style</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {THINKING_STYLE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setThinkingStyle(option.value)}
+                      className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
+                        thinkingStyle === option.value
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border hover:border-primary/40'
+                      }`}
+                    >
+                      <p className={`text-xs font-semibold ${thinkingStyle === option.value ? 'text-primary' : 'text-foreground'}`}>
+                        {option.label}
+                      </p>
+                      <p className="text-2xs text-muted-foreground mt-0.5">{option.description}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5" htmlFor="custom-instructions">
+                  Anything else this model should always keep in mind?
+                </label>
+                <textarea
+                  id="custom-instructions"
+                  value={customInstructions}
+                  onChange={(e) => setCustomInstructions(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Always suggest tests for new functions. Prefer functional over class components."
+                  className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all resize-y"
+                />
+              </div>
+
+              {personaError && <p className="text-xs text-negative">{personaError}</p>}
+
+              <button
+                type="submit"
+                disabled={personaState === 'saving'}
+                className="flex items-center gap-2 bg-primary text-primary-foreground text-sm font-semibold px-4 py-2 rounded-lg hover:opacity-90 active:scale-95 transition-all disabled:opacity-60"
+              >
+                {personaState === 'saving' && <Icon name="ArrowPathIcon" size={14} className="animate-spin" />}
+                {personaState === 'saved' ? 'Saved ✓' : 'Save personality for this model'}
+              </button>
+            </form>
+          )}
         </div>
 
         {/* Email card */}
