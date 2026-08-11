@@ -103,7 +103,7 @@ async function callAnthropic(messages: ChatMessage[], model: string, systemPromp
     throw new Error('ANTHROPIC_API_KEY is missing. Add a real key to your .env file.');
   }
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch('https://api.pateway.ai/v1', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
