@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runSearchAgent } from '@/lib/ai/search-agent';
-import { callBase44Clone } from '@/lib/ai/base44-agent';
 
 export const runtime = 'nodejs';
 
@@ -168,15 +167,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No messages provided' }, { status: 400 });
     }
 
-    // The search agent and Base44 clone are separate pipelines with their
-    // own prompt structures — persona isn't applied to them (yet).
+    // The search agent is a separate pipeline with its own prompt
+    // structure — persona isn't applied to it (yet).
     if (modelId === 'search-agent') {
       const content = await runSearchAgent(messages);
-      return NextResponse.json({ content });
-    }
-
-    if (modelId === 'ai-clone-base44') {
-      const content = await callBase44Clone(messages);
       return NextResponse.json({ content });
     }
 
