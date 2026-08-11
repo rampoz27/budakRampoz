@@ -22,7 +22,7 @@ const AI_MODELS: AIModel[] = [
   { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'OpenAI', color: '#10A37F', badge: 'Smart' },
   { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'Anthropic', color: '#D97706', badge: 'Best' },
   { id: 'claude-3-haiku', name: 'Claude 3 Haiku', provider: 'Anthropic', color: '#D97706', badge: null },
-  { id: 'gemini-pro', name: 'Gemini 1.5 Pro', provider: 'Google', color: '#4285F4', badge: 'Long ctx' },
+  { id: 'gemini-pro', name: 'Gemini 3.6 Flash', provider: 'Google', color: '#4285F4', badge: 'Long ctx' },
   { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: 'Groq', color: '#F55036', badge: 'Blazing fast' },
   { id: 'gpt-oss-120b-groq', name: 'GPT-OSS 120B', provider: 'Groq', color: '#F55036', badge: 'Reasoning' },
   { id: 'search-agent', name: 'AI Search Agent', provider: 'CodeMind', color: '#22C55E', badge: '2-step' },
