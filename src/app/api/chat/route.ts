@@ -14,7 +14,7 @@ interface ChatRequestBody {
   personaPrompt?: string;
 }
 
-const SYSTEM_PROMPT =
+const BASE_SYSTEM_PROMPT =
   'You are very helpfull AI Assistant, that can help everything';
   // You are CodeMind, an AI coding assistant. Help developers debug, brainstorm, refactor, and review code. Use fenced code blocks with a language tag (e.g. ```tsx) whenever you include code. Be concise and practical.
 
