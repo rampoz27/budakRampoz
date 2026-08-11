@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runSearchAgent } from '@/lib/ai/search-agent';
+import { callBase44Clone } from '@/lib/ai/base44-agent';
 
 export const runtime = 'nodejs';
 
@@ -11,10 +12,19 @@ interface ChatMessage {
 interface ChatRequestBody {
   modelId: string;
   messages: ChatMessage[];
+  personaPrompt?: string;
 }
 
-const SYSTEM_PROMPT =
-  'You are CodeMind, an AI coding assistant. Help developers debug, brainstorm, refactor, and review code. Use fenced code blocks with a language tag (e.g. ```tsx) whenever you include code. Be concise and practical.';
+const BASE_SYSTEM_PROMPT =
+  'You are CodeMind, an AI coding assistant. Help developers debug, brainstorm, refactor, and review code. Use fenced code blocks with a language tag (e.g. ```tsx) whenever you include code.';
+
+// Combines the fixed base prompt with the user's custom persona settings
+// (tone, thinking style, custom instructions) so personality stays
+// consistent no matter which model/provider answers the request.
+function buildSystemPrompt(personaPrompt?: string): string {
+  if (!personaPrompt) return BASE_SYSTEM_PROMPT;
+  return `${BASE_SYSTEM_PROMPT}\n\n${personaPrompt}`;
+}
 
 // Maps the model ids used in the UI to the real model id each provider expects.
 // 'search-agent' is special-cased below — it's not a single provider call,
@@ -32,7 +42,7 @@ const MODEL_MAP: Record<
   'gpt-oss-120b-groq': { provider: 'groq', model: 'openai/gpt-oss-120b' },
 };
 
-async function callOpenAI(messages: ChatMessage[], model: string) {
+async function callOpenAI(messages: ChatMessage[], model: string, systemPrompt: string) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || apiKey.startsWith('your-')) {
     throw new Error('OPENAI_API_KEY is missing. Add a real key to your .env file.');
@@ -46,7 +56,7 @@ async function callOpenAI(messages: ChatMessage[], model: string) {
     },
     body: JSON.stringify({
       model,
-      messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
     }),
   });
 
@@ -59,7 +69,7 @@ async function callOpenAI(messages: ChatMessage[], model: string) {
   return data.choices?.[0]?.message?.content ?? '';
 }
 
-async function callGroq(messages: ChatMessage[], model: string) {
+async function callGroq(messages: ChatMessage[], model: string, systemPrompt: string) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey || apiKey.startsWith('your-')) {
     throw new Error('GROQ_API_KEY is missing. Add a real key to your .env file.');
@@ -74,7 +84,7 @@ async function callGroq(messages: ChatMessage[], model: string) {
     },
     body: JSON.stringify({
       model,
-      messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
     }),
   });
 
@@ -87,7 +97,7 @@ async function callGroq(messages: ChatMessage[], model: string) {
   return data.choices?.[0]?.message?.content ?? '';
 }
 
-async function callAnthropic(messages: ChatMessage[], model: string) {
+async function callAnthropic(messages: ChatMessage[], model: string, systemPrompt: string) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey || apiKey.startsWith('your-')) {
     throw new Error('ANTHROPIC_API_KEY is missing. Add a real key to your .env file.');
@@ -103,7 +113,7 @@ async function callAnthropic(messages: ChatMessage[], model: string) {
     body: JSON.stringify({
       model,
       max_tokens: 2048,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages,
     }),
   });
@@ -117,7 +127,7 @@ async function callAnthropic(messages: ChatMessage[], model: string) {
   return data.content?.[0]?.text ?? '';
 }
 
-async function callGemini(messages: ChatMessage[], model: string) {
+async function callGemini(messages: ChatMessage[], model: string, systemPrompt: string) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.startsWith('your-')) {
     throw new Error('GEMINI_API_KEY is missing. Add a real key to your .env file.');
@@ -135,7 +145,7 @@ async function callGemini(messages: ChatMessage[], model: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents,
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        systemInstruction: { parts: [{ text: systemPrompt }] },
       }),
     }
   );
@@ -152,16 +162,21 @@ async function callGemini(messages: ChatMessage[], model: string) {
 export async function POST(req: NextRequest) {
   try {
     const body: ChatRequestBody = await req.json();
-    const { modelId, messages } = body;
+    const { modelId, messages, personaPrompt } = body;
 
     if (!messages || messages.length === 0) {
       return NextResponse.json({ error: 'No messages provided' }, { status: 400 });
     }
 
-    // The search agent is a pipeline, not a single provider call — handle
-    // it separately before touching MODEL_MAP.
+    // The search agent and Base44 clone are separate pipelines with their
+    // own prompt structures — persona isn't applied to them (yet).
     if (modelId === 'search-agent') {
       const content = await runSearchAgent(messages);
+      return NextResponse.json({ content });
+    }
+
+    if (modelId === 'ai-clone-base44') {
+      const content = await callBase44Clone(messages);
       return NextResponse.json({ content });
     }
 
@@ -173,15 +188,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const systemPrompt = buildSystemPrompt(personaPrompt);
+
     let content: string;
     if (mapped.provider === 'openai') {
-      content = await callOpenAI(messages, mapped.model);
+      content = await callOpenAI(messages, mapped.model, systemPrompt);
     } else if (mapped.provider === 'anthropic') {
-      content = await callAnthropic(messages, mapped.model);
+      content = await callAnthropic(messages, mapped.model, systemPrompt);
     } else if (mapped.provider === 'groq') {
-      content = await callGroq(messages, mapped.model);
+      content = await callGroq(messages, mapped.model, systemPrompt);
     } else {
-      content = await callGemini(messages, mapped.model);
+      content = await callGemini(messages, mapped.model, systemPrompt);
     }
 
     return NextResponse.json({ content });
