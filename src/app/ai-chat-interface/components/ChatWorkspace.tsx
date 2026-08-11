@@ -6,6 +6,7 @@ import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import ConversationSidebar from './ConversationSidebar';
 import Icon from '@/components/ui/AppIcon';
+import { fetchOrDefaultAiSettings, buildPersonaPrompt } from '@/lib/supabase/ai-settings';
 import {
   fetchConversations,
   fetchMessages,
@@ -45,6 +46,7 @@ function toUiConversation(row: ConversationRow): Conversation {
 export default function ChatWorkspace() {
   const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[2]);
   const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
+  const [personaPrompt, setPersonaPrompt] = useState('');
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [activeConversation, setActiveConversation] = useState<ConversationRow | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -63,6 +65,9 @@ export default function ChatWorkspace() {
 
   useEffect(() => {
     loadConversations();
+    fetchOrDefaultAiSettings()
+      .then((settings) => setPersonaPrompt(buildPersonaPrompt(settings)))
+      .catch((err) => console.error('Failed to load AI persona settings', err));
   }, [loadConversations]);
 
   useEffect(() => {
@@ -152,6 +157,7 @@ export default function ChatWorkspace() {
         body: JSON.stringify({
           modelId: selectedModel.id,
           messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
+          personaPrompt,
         }),
       });
 
