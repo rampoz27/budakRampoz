@@ -14,9 +14,7 @@ interface ChatRequestBody {
   personaPrompt?: string;
 }
 
-const BASE_SYSTEM_PROMPT =
-  'You are very helpfull AI Assistant, that can help everything';
-  // You are CodeMind, an AI coding assistant. Help developers debug, brainstorm, refactor, and review code. Use fenced code blocks with a language tag (e.g. ```tsx) whenever you include code. Be concise and practical.
+const BASE_SYSTEM_PROMPT = 'You are a very helpful AI assistant, that can help with everything.';
 
 // Combines the fixed base prompt with the user's custom persona settings
 // (tone, thinking style, custom instructions) so personality stays
@@ -103,7 +101,7 @@ async function callAnthropic(messages: ChatMessage[], model: string, systemPromp
     throw new Error('ANTHROPIC_API_KEY is missing. Add a real key to your .env file.');
   }
 
-  const res = await fetch('https://api.pateway.ai/v1', {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -139,10 +137,13 @@ async function callGemini(messages: ChatMessage[], model: string, systemPrompt: 
   }));
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
       body: JSON.stringify({
         contents,
         systemInstruction: { parts: [{ text: systemPrompt }] },
