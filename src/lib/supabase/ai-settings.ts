@@ -3,15 +3,17 @@ import { supabase } from './client';
 export type Tone = 'friendly' | 'formal' | 'casual' | 'direct' | 'witty';
 export type ThinkingStyle = 'step-by-step' | 'concise' | 'explain-reasoning' | 'just-answer';
 
-export interface AiSettingsRow {
+export interface ModelPersonaRow {
+  id: string;
   user_id: string;
+  model_id: string;
   tone: Tone;
   thinking_style: ThinkingStyle;
   custom_instructions: string;
   updated_at: string;
 }
 
-export interface AiSettingsInput {
+export interface PersonaInput {
   tone: Tone;
   thinking_style: ThinkingStyle;
   custom_instructions: string;
@@ -47,10 +49,15 @@ const THINKING_TEXT: Record<ThinkingStyle, string> = {
   'just-answer': 'Give the answer directly. Skip explanations unless the user explicitly asks for them.',
 };
 
-// Builds the persona instructions that get prepended to every AI request,
-// regardless of which model/provider is selected — this is what keeps the
-// personality consistent across model switches.
-export function buildPersonaPrompt(settings: AiSettingsInput): string {
+export const DEFAULT_PERSONA: PersonaInput = {
+  tone: 'friendly',
+  thinking_style: 'concise',
+  custom_instructions: '',
+};
+
+// Builds the persona instructions prepended to a request for a specific
+// model — this is what makes each model's personality distinct.
+export function buildPersonaPrompt(settings: PersonaInput): string {
   const parts = [TONE_TEXT[settings.tone], THINKING_TEXT[settings.thinking_style]];
   if (settings.custom_instructions.trim()) {
     parts.push(settings.custom_instructions.trim());
@@ -58,43 +65,57 @@ export function buildPersonaPrompt(settings: AiSettingsInput): string {
   return parts.join(' ');
 }
 
-const DEFAULT_SETTINGS: AiSettingsInput = {
-  tone: 'friendly',
-  thinking_style: 'concise',
-  custom_instructions: '',
-};
-
-export async function fetchAiSettings(): Promise<AiSettingsRow | null> {
+// Fetches every model persona the user has configured — used by the
+// Settings page to show which models already have a custom persona.
+export async function fetchAllPersonas(): Promise<ModelPersonaRow[]> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData.user) return null;
+  if (userError || !userData.user) return [];
 
   const { data, error } = await supabase
-    .from('ai_settings')
+    .from('ai_model_personas')
+    .select('*')
+    .eq('user_id', userData.user.id);
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+// Fetches the persona for one specific model, falling back to sensible
+// defaults if the user hasn't customized that model yet.
+export async function fetchPersonaForModel(modelId: string): Promise<PersonaInput> {
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError || !userData.user) return DEFAULT_PERSONA;
+
+  const { data, error } = await supabase
+    .from('ai_model_personas')
     .select('*')
     .eq('user_id', userData.user.id)
+    .eq('model_id', modelId)
     .maybeSingle();
 
   if (error) throw error;
-  return data;
-}
+  if (!data) return DEFAULT_PERSONA;
 
-export async function fetchOrDefaultAiSettings(): Promise<AiSettingsInput> {
-  const row = await fetchAiSettings();
-  if (!row) return DEFAULT_SETTINGS;
   return {
-    tone: row.tone,
-    thinking_style: row.thinking_style,
-    custom_instructions: row.custom_instructions,
+    tone: data.tone,
+    thinking_style: data.thinking_style,
+    custom_instructions: data.custom_instructions,
   };
 }
 
-export async function saveAiSettings(input: AiSettingsInput): Promise<AiSettingsRow> {
+export async function savePersonaForModel(
+  modelId: string,
+  input: PersonaInput
+): Promise<ModelPersonaRow> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError || !userData.user) throw new Error('Not signed in');
 
   const { data, error } = await supabase
-    .from('ai_settings')
-    .upsert({ user_id: userData.user.id, ...input })
+    .from('ai_model_personas')
+    .upsert(
+      { user_id: userData.user.id, model_id: modelId, ...input },
+      { onConflict: 'user_id,model_id' }
+    )
     .select()
     .single();
 
