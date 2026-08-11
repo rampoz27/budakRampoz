@@ -125,9 +125,13 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
-// Reveals `fullText` a few characters at a time, like it's being typed.
-// Total duration stays roughly constant regardless of message length by
-// scaling the chunk size to the text length.
+// Reveals `fullText` at a roughly constant reading-friendly speed (~250
+// chars/sec), like it's being typed live. Very long messages are capped
+// at MAX_DURATION_MS so they don't take forever to fully appear.
+const REVEAL_CHARS_PER_SEC = 250;
+const INTERVAL_MS = 16;
+const MAX_DURATION_MS = 4000;
+
 function TypewriterMarkdown({
   fullText,
   onDone,
@@ -144,9 +148,13 @@ function TypewriterMarkdown({
     doneRef.current = false;
     setVisibleChars(0);
 
-    const totalTicks = 90; // roughly how many animation steps, regardless of length
-    const chunkSize = Math.max(1, Math.ceil(fullText.length / totalTicks));
-    const intervalMs = 16;
+    // Baseline: constant speed. If that would take longer than the cap,
+    // speed up just enough to fit within it instead.
+    let chunkSize = Math.max(1, Math.round((REVEAL_CHARS_PER_SEC * INTERVAL_MS) / 1000));
+    const estimatedDurationMs = (fullText.length / chunkSize) * INTERVAL_MS;
+    if (estimatedDurationMs > MAX_DURATION_MS) {
+      chunkSize = Math.max(1, Math.ceil(fullText.length / (MAX_DURATION_MS / INTERVAL_MS)));
+    }
 
     const interval = setInterval(() => {
       setVisibleChars((prev) => {
@@ -159,7 +167,7 @@ function TypewriterMarkdown({
         }
         return next;
       });
-    }, intervalMs);
+    }, INTERVAL_MS);
 
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
