@@ -35,7 +35,7 @@ const MODEL_MAP: Record<
   'gpt-4-turbo': { provider: 'openai', model: 'gpt-4-turbo' },
   'claude-3-5-sonnet': { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' },
   'claude-3-haiku': { provider: 'anthropic', model: 'claude-3-haiku-20240307' },
-  'gemini-pro': { provider: 'gemini', model: 'gemini-1.5-pro' },
+  'gemini-pro': { provider: 'gemini', model: 'gemini-3.6-flash' },
   'llama-3.3-70b': { provider: 'groq', model: 'llama-3.3-70b-versatile' },
   'gpt-oss-120b-groq': { provider: 'groq', model: 'openai/gpt-oss-120b' },
 };
