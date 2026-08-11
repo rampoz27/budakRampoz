@@ -25,6 +25,7 @@ const AI_MODELS: AIModel[] = [
   { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: 'Groq', color: '#F55036', badge: 'Blazing fast' },
   { id: 'gpt-oss-120b-groq', name: 'GPT-OSS 120B', provider: 'Groq', color: '#F55036', badge: 'Reasoning' },
   { id: 'search-agent', name: 'AI Search Agent', provider: 'CodeMind', color: '#22C55E', badge: '2-step' },
+  { id: 'ai-clone-base44', name: 'My AI Clone', provider: 'Base44', color: '#8B5CF6', badge: 'MCP' },
 ];
 
 function toUiConversation(row: ConversationRow): Conversation {
@@ -43,6 +44,7 @@ function toUiConversation(row: ConversationRow): Conversation {
 
 export default function ChatWorkspace() {
   const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[2]);
+  const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [activeConversation, setActiveConversation] = useState<ConversationRow | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -73,6 +75,7 @@ export default function ChatWorkspace() {
 
     setActiveConversation(conv);
     setIsLoadingMessages(true);
+    setTypingMessageId(null);
     try {
       const rows = await fetchMessages(id);
       setMessages(
@@ -94,6 +97,7 @@ export default function ChatWorkspace() {
   const handleNewChat = () => {
     setActiveConversation(null);
     setMessages([]);
+    setTypingMessageId(null);
   };
 
   const handleDeleteConversation = async (id: string) => {
@@ -163,6 +167,7 @@ export default function ChatWorkspace() {
       };
 
       setMessages((prev) => [...prev, aiResponse]);
+      setTypingMessageId(aiResponse.id);
       await saveMessage(conv.id, 'assistant', data.content, selectedModel.id);
       await loadConversations();
     } catch (err) {
@@ -210,6 +215,8 @@ export default function ChatWorkspace() {
             isStreaming={isStreaming}
             streamingModel={selectedModel}
             messagesEndRef={messagesEndRef}
+            typingMessageId={typingMessageId}
+            onTypingComplete={() => setTypingMessageId(null)}
           />
         )}
 
