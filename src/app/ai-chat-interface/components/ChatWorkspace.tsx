@@ -18,13 +18,15 @@ import {
 import type { Message, AIModel, Conversation } from './chatTypes';
 
 const AI_MODELS: AIModel[] = [
-  { id: 'gpt-4o', name: 'GPT-4o', provider: 'OpenAI', color: '#10A37F', badge: 'Fast' },
-  { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'OpenAI', color: '#10A37F', badge: 'Smart' },
-  { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'Anthropic', color: '#D97706', badge: 'Best' },
-  { id: 'claude-3-haiku', name: 'Claude 3 Haiku', provider: 'Anthropic', color: '#D97706', badge: null },
+  // Commented out until OPENAI_API_KEY is set in .env — uncomment to re-enable.
+  // { id: 'gpt-4o', name: 'GPT-5.4 Mini', provider: 'OpenAI', color: '#10A37F', badge: 'Fast' },
+  // { id: 'gpt-4-turbo', name: 'GPT-5.4', provider: 'OpenAI', color: '#10A37F', badge: 'Smart' },
+  // Commented out until ANTHROPIC_API_KEY is set in .env — uncomment to re-enable.
+  // { id: 'claude-3-5-sonnet', name: 'Claude Sonnet 5', provider: 'Anthropic', color: '#D97706', badge: 'Best' },
+  // { id: 'claude-3-haiku', name: 'Claude Haiku 4.5', provider: 'Anthropic', color: '#D97706', badge: null },
+  { id: 'gpt-oss-120b-groq', name: 'GPT-OSS 120B', provider: 'Groq', color: '#F55036', badge: 'Reasoning' },
   { id: 'gemini-pro', name: 'Gemini 3.6 Flash', provider: 'Google', color: '#4285F4', badge: 'Long ctx' },
   { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: 'Groq', color: '#F55036', badge: 'Blazing fast' },
-  { id: 'gpt-oss-120b-groq', name: 'GPT-OSS 120B', provider: 'Groq', color: '#F55036', badge: 'Reasoning' },
   { id: 'search-agent', name: 'AI Search Agent', provider: 'CodeMind', color: '#22C55E', badge: '2-step' },
 ];
 
@@ -37,13 +39,13 @@ function toUiConversation(row: ConversationRow): Conversation {
     lastMessage: row.last_message || 'No messages yet',
     timestamp: row.updated_at,
     messageCount: row.message_count,
-    modelId: row.model_id || 'gpt-4o',
+    modelId: row.model_id || 'llama-3.3-70b',
     fileCount: 0,
   };
 }
 
 export default function ChatWorkspace() {
-  const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[2]);
+  const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[0]);
   const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
   const [personaPrompt, setPersonaPrompt] = useState('');
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
