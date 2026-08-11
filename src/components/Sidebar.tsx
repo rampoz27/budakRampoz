@@ -71,7 +71,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, activeRoute }: Si
           <AppLogo size={28} />
           {!collapsed && (
             <span className="font-semibold text-base text-foreground truncate tracking-tight">
-              CodeMind
+              Rampoz AI Agent
             </span>
           )}
         </div>
