@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Icon from '@/components/ui/AppIcon';
@@ -12,6 +12,11 @@ interface ChatMessagesProps {
   isStreaming: boolean;
   streamingModel: AIModel;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
+  // The id of the assistant message that should play the typewriter
+  // reveal effect. Every other message renders instantly. Cleared by
+  // calling onTypingComplete once the animation finishes.
+  typingMessageId?: string | null;
+  onTypingComplete?: () => void;
 }
 
 function formatBytes(bytes: number) {
@@ -41,103 +46,136 @@ const MODEL_NAMES: Record<string, string> = {
   'search-agent': 'Search Agent',
 };
 
-// Renders assistant message content as real markdown: tables, headings,
-// lists, bold text, and fenced code blocks (via the existing CodeBlock
-// component) all render properly instead of showing raw markdown symbols.
+const markdownComponents = {
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="text-secondary-foreground leading-relaxed mb-2 last:mb-0">{children}</p>
+  ),
+  h1: ({ children }: { children?: React.ReactNode }) => (
+    <h1 className="text-base font-bold text-foreground mt-3 mb-1.5 first:mt-0">{children}</h1>
+  ),
+  h2: ({ children }: { children?: React.ReactNode }) => (
+    <h2 className="text-sm font-bold text-foreground mt-3 mb-1.5 first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }: { children?: React.ReactNode }) => (
+    <h3 className="text-sm font-semibold text-foreground mt-3 mb-1 first:mt-0">{children}</h3>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="list-disc list-outside ml-4 space-y-1 mb-2 text-secondary-foreground">{children}</ul>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="list-decimal list-outside ml-4 space-y-1 mb-2 text-secondary-foreground">{children}</ol>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => <li className="leading-relaxed">{children}</li>,
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-foreground">{children}</strong>
+  ),
+  em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
+  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-primary hover:text-primary/80 underline underline-offset-2"
+    >
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }: { children?: React.ReactNode }) => (
+    <blockquote className="border-l-2 border-primary/40 pl-3 italic text-muted-foreground my-2">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="border-border my-3" />,
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="overflow-x-auto my-2 rounded-lg border border-border">
+      <table className="w-full text-xs border-collapse">{children}</table>
+    </div>
+  ),
+  thead: ({ children }: { children?: React.ReactNode }) => <thead className="bg-muted">{children}</thead>,
+  tbody: ({ children }: { children?: React.ReactNode }) => <tbody>{children}</tbody>,
+  tr: ({ children }: { children?: React.ReactNode }) => (
+    <tr className="border-b border-border last:border-b-0">{children}</tr>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="text-left font-semibold text-foreground px-3 py-2 whitespace-nowrap">{children}</th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="px-3 py-2 text-secondary-foreground align-top">{children}</td>
+  ),
+  code(props: { className?: string; children?: React.ReactNode }) {
+    const { className, children } = props;
+    const match = /language-(\w+)/.exec(className || '');
+    if (match) {
+      return <CodeBlock code={String(children).replace(/\n$/, '')} language={match[1]} />;
+    }
+    return (
+      <code className="bg-muted text-accent px-1.5 py-0.5 rounded text-xs font-mono">{children}</code>
+    );
+  },
+  pre: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+};
+
 function MarkdownContent({ content }: { content: string }) {
   return (
     <div className="text-sm leading-relaxed space-y-2">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          p: ({ children }) => (
-            <p className="text-secondary-foreground leading-relaxed mb-2 last:mb-0">{children}</p>
-          ),
-          h1: ({ children }) => (
-            <h1 className="text-base font-bold text-foreground mt-3 mb-1.5 first:mt-0">{children}</h1>
-          ),
-          h2: ({ children }) => (
-            <h2 className="text-sm font-bold text-foreground mt-3 mb-1.5 first:mt-0">{children}</h2>
-          ),
-          h3: ({ children }) => (
-            <h3 className="text-sm font-semibold text-foreground mt-3 mb-1 first:mt-0">{children}</h3>
-          ),
-          ul: ({ children }) => (
-            <ul className="list-disc list-outside ml-4 space-y-1 mb-2 text-secondary-foreground">
-              {children}
-            </ul>
-          ),
-          ol: ({ children }) => (
-            <ol className="list-decimal list-outside ml-4 space-y-1 mb-2 text-secondary-foreground">
-              {children}
-            </ol>
-          ),
-          li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-          strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
-          em: ({ children }) => <em className="italic">{children}</em>,
-          a: ({ children, href }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:text-primary/80 underline underline-offset-2"
-            >
-              {children}
-            </a>
-          ),
-          blockquote: ({ children }) => (
-            <blockquote className="border-l-2 border-primary/40 pl-3 italic text-muted-foreground my-2">
-              {children}
-            </blockquote>
-          ),
-          hr: () => <hr className="border-border my-3" />,
-          table: ({ children }) => (
-            <div className="overflow-x-auto my-2 rounded-lg border border-border">
-              <table className="w-full text-xs border-collapse">{children}</table>
-            </div>
-          ),
-          thead: ({ children }) => <thead className="bg-muted">{children}</thead>,
-          tbody: ({ children }) => <tbody>{children}</tbody>,
-          tr: ({ children }) => <tr className="border-b border-border last:border-b-0">{children}</tr>,
-          th: ({ children }) => (
-            <th className="text-left font-semibold text-foreground px-3 py-2 whitespace-nowrap">
-              {children}
-            </th>
-          ),
-          td: ({ children }) => (
-            <td className="px-3 py-2 text-secondary-foreground align-top">{children}</td>
-          ),
-          // Fenced code blocks (```lang ... ```) render via the existing
-          // CodeBlock component; inline `code` gets a simple pill style.
-          code(props) {
-            const { className, children } = props;
-            const match = /language-(\w+)/.exec(className || '');
-            if (match) {
-              return (
-                <CodeBlock
-                  code={String(children).replace(/\n$/, '')}
-                  language={match[1]}
-                />
-              );
-            }
-            return (
-              <code className="bg-muted text-accent px-1.5 py-0.5 rounded text-xs font-mono">
-                {children}
-              </code>
-            );
-          },
-          // Prevent the browser's default <pre> box from double-wrapping
-          // our custom CodeBlock styling.
-          pre: ({ children }) => <>{children}</>,
-        }}
-      >
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {content}
       </ReactMarkdown>
     </div>
   );
 }
 
-export default function ChatMessages({ messages, isStreaming, streamingModel, messagesEndRef }: ChatMessagesProps) {
+// Reveals `fullText` a few characters at a time, like it's being typed.
+// Total duration stays roughly constant regardless of message length by
+// scaling the chunk size to the text length.
+function TypewriterMarkdown({
+  fullText,
+  onDone,
+  onTick,
+}: {
+  fullText: string;
+  onDone: () => void;
+  onTick?: () => void;
+}) {
+  const [visibleChars, setVisibleChars] = useState(0);
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    doneRef.current = false;
+    setVisibleChars(0);
+
+    const totalTicks = 90; // roughly how many animation steps, regardless of length
+    const chunkSize = Math.max(1, Math.ceil(fullText.length / totalTicks));
+    const intervalMs = 16;
+
+    const interval = setInterval(() => {
+      setVisibleChars((prev) => {
+        const next = Math.min(prev + chunkSize, fullText.length);
+        onTick?.();
+        if (next >= fullText.length && !doneRef.current) {
+          doneRef.current = true;
+          clearInterval(interval);
+          onDone();
+        }
+        return next;
+      });
+    }, intervalMs);
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullText]);
+
+  return <MarkdownContent content={fullText.slice(0, visibleChars)} />;
+}
+
+export default function ChatMessages({
+  messages,
+  isStreaming,
+  streamingModel,
+  messagesEndRef,
+  typingMessageId,
+  onTypingComplete,
+}: ChatMessagesProps) {
   if (messages.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
@@ -204,7 +242,15 @@ export default function ChatMessages({ messages, isStreaming, streamingModel, me
               message.role === 'user' ? 'message-user-bubble rounded-tr-sm' : 'message-ai-bubble rounded-tl-sm'
             }`}>
               {message.role === 'assistant' ? (
-                <MarkdownContent content={message.content} />
+                message.id === typingMessageId ? (
+                  <TypewriterMarkdown
+                    fullText={message.content}
+                    onDone={() => onTypingComplete?.()}
+                    onTick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })}
+                  />
+                ) : (
+                  <MarkdownContent content={message.content} />
+                )
               ) : (
                 <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{message.content}</p>
               )}
@@ -237,7 +283,7 @@ export default function ChatMessages({ messages, isStreaming, streamingModel, me
         </div>
       ))}
 
-      {/* Streaming indicator */}
+      {/* Streaming indicator (shown while waiting for the AI's response) */}
       {isStreaming && (
         <div className="flex gap-3 justify-start fade-in">
           <div
