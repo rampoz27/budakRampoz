@@ -314,6 +314,9 @@ export default function ChatWorkspace() {
           messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
           personaSettings,
           ragContext,
+          // Browser's local time — naturally already in the user's own
+          // timezone, no conversion needed.
+          currentDateTime: new Date().toString(),
         }),
       });
 
