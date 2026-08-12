@@ -40,6 +40,7 @@ export default function SettingsWorkspace() {
 
   // AI Personality — now per model
   const [personaModelId, setPersonaModelId] = useState(AI_MODELS[0]?.id ?? '');
+  const [nickname, setNickname] = useState('');
   const [tone, setTone] = useState<Tone>('friendly');
   const [thinkingStyle, setThinkingStyle] = useState<ThinkingStyle>('concise');
   const [customInstructions, setCustomInstructions] = useState('');
@@ -82,6 +83,7 @@ export default function SettingsWorkspace() {
     fetchPersonaForModel(personaModelId)
       .then((persona) => {
         if (isCancelled) return;
+        setNickname(persona.nickname);
         setTone(persona.tone);
         setThinkingStyle(persona.thinking_style);
         setCustomInstructions(persona.custom_instructions);
@@ -178,6 +180,7 @@ export default function SettingsWorkspace() {
 
     try {
       await savePersonaForModel(personaModelId, {
+        nickname: nickname.trim(),
         tone,
         thinking_style: thinkingStyle,
         custom_instructions: customInstructions,
@@ -280,6 +283,24 @@ export default function SettingsWorkspace() {
             </div>
           ) : (
             <form onSubmit={handleSavePersona} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5" htmlFor="persona-nickname">
+                  Nickname (optional)
+                </label>
+                <input
+                  id="persona-nickname"
+                  type="text"
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value)}
+                  placeholder="e.g. Gem"
+                  className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                />
+                <p className="text-2xs text-muted-foreground mt-1.5">
+                  The model introduces itself with this name, and you can address it in chat by
+                  typing it followed by a comma or colon — e.g. &quot;{nickname || 'Gem'}, ...&quot;.
+                </p>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">Tone</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
