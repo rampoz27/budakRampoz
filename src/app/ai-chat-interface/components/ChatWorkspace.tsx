@@ -298,12 +298,12 @@ export default function ChatWorkspace() {
         role: 'assistant',
         content: data.content,
         timestamp: new Date().toISOString(),
-        model: selectedModel.id,
+        model: data.actualModelId || selectedModel.id,
       };
 
       setMessages((prev) => [...prev, aiResponse]);
       setTypingMessageId(aiResponse.id);
-      await saveMessage(conv.id, 'assistant', data.content, selectedModel.id);
+      await saveMessage(conv.id, 'assistant', data.content, data.actualModelId || selectedModel.id);
       await loadConversations();
     } catch (err) {
       const errorMessage: Message = {
