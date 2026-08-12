@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Icon from '@/components/ui/AppIcon';
-import type { ShiftTemplateRow, ShiftTemplateInput } from '@/lib/shifts';
+import type { ShiftTemplateRow, ShiftTemplateInput } from '@/lib/supabase/shifts';
 
 interface ShiftTemplateModalProps {
   template: ShiftTemplateRow | null; // null = creating new
