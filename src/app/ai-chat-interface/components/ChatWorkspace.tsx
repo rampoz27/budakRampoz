@@ -7,7 +7,14 @@ import ChatInput from './ChatInput';
 import ConversationSidebar from './ConversationSidebar';
 import Icon from '@/components/ui/AppIcon';
 import { fetchPersonaForModel, buildPersonaPrompt } from '@/lib/supabase/ai-settings';
-import { findRelevantNotes, hasAnyNotes, createNote } from '@/lib/supabase/notes';
+import {
+  findRelevantNotes,
+  hasAnyNotes,
+  createNote,
+  deleteNote,
+  updateNote,
+  searchNotesByText,
+} from '@/lib/supabase/notes';
 import { detectNoteTrigger } from '@/lib/note-trigger';
 import { AI_MODELS } from '@/lib/models';
 import {
@@ -19,6 +26,65 @@ import {
   type ConversationRow,
 } from '@/lib/supabase/conversations';
 import type { Message, AIModel, Conversation } from './chatTypes';
+
+// Executes a matched note command and returns the confirmation text to
+// show in chat. Kept outside the component since it doesn't touch React
+// state directly — just Supabase calls and plain logic.
+async function handleNoteCommand(
+  trigger: ReturnType<typeof detectNoteTrigger>,
+  lastAssistantContent: string | undefined
+): Promise<string> {
+  if (trigger.action === 'add') {
+    const noteContent = trigger.newContent || lastAssistantContent || '';
+    if (!noteContent.trim()) {
+      return "I don't have anything to save yet — either write what to save after your command (e.g. \"tambahkan ke note: ...\"), or ask something first so there's a reply to save.";
+    }
+    const title = noteContent.trim().split('\n')[0].slice(0, 60) || 'Untitled note';
+    await createNote({ title, content: noteContent.trim(), tags: ['from-chat'] });
+    return `✅ Saved to your notes: **"${title}"**`;
+  }
+
+  if (trigger.action === 'delete') {
+    if (!trigger.target.trim()) {
+      return 'Which note should I delete? Try something like "hapus note supabase".';
+    }
+    const matches = await searchNotesByText(trigger.target.trim());
+    if (matches.length === 0) {
+      return `I couldn't find a note matching "${trigger.target}".`;
+    }
+    if (matches.length > 1) {
+      const list = matches.map((m) => `- "${m.title}"`).join('\n');
+      return `Found more than one note matching "${trigger.target}" — be more specific:\n\n${list}`;
+    }
+    const note = matches[0];
+    const confirmed = confirm(`Delete note "${note.title}"? This cannot be undone.`);
+    if (!confirmed) return 'Cancelled — the note was not deleted.';
+    await deleteNote(note.id);
+    return `🗑️ Deleted note: **"${note.title}"**`;
+  }
+
+  if (trigger.action === 'edit') {
+    if (!trigger.target.trim()) {
+      return 'Which note should I edit? Try something like "edit note supabase: new content here".';
+    }
+    if (!trigger.newContent.trim()) {
+      return `Found the note you mean, but I need the new content too — try "edit note ${trigger.target}: <new content>".`;
+    }
+    const matches = await searchNotesByText(trigger.target.trim());
+    if (matches.length === 0) {
+      return `I couldn't find a note matching "${trigger.target}".`;
+    }
+    if (matches.length > 1) {
+      const list = matches.map((m) => `- "${m.title}"`).join('\n');
+      return `Found more than one note matching "${trigger.target}" — be more specific:\n\n${list}`;
+    }
+    const note = matches[0];
+    await updateNote(note.id, { title: note.title, content: trigger.newContent.trim(), tags: note.tags });
+    return `✏️ Updated note: **"${note.title}"**`;
+  }
+
+  return "I recognized that as a note command but couldn't figure out what to do with it.";
+}
 
 function toUiConversation(row: ConversationRow): Conversation {
   return {
@@ -154,25 +220,16 @@ export default function ChatWorkspace() {
     setMessages(nextMessages);
     setIsStreaming(true);
 
-    // "tambahkan ke note: ..." / "save this to notes" — handled entirely
-    // locally, no LLM call needed, so it's near-instant.
+    // Note commands ("tambahkan ke note...", "hapus note...", "edit
+    // note...") are handled entirely locally, no LLM call needed, so
+    // they're near-instant.
     const trigger = detectNoteTrigger(content);
     if (trigger.matched) {
       try {
         await saveMessage(conv.id, 'user', content, selectedModel.id);
 
         const lastAssistantMsg = [...messages].reverse().find((m) => m.role === 'assistant');
-        const noteContent = trigger.extractedContent || lastAssistantMsg?.content || '';
-
-        let confirmationText: string;
-        if (!noteContent.trim()) {
-          confirmationText =
-            "I don't have anything to save yet — either write what to save after your command (e.g. \"tambahkan ke note: ...\"), or ask something first so there's a reply to save.";
-        } else {
-          const title = noteContent.trim().split('\n')[0].slice(0, 60) || 'Untitled note';
-          await createNote({ title, content: noteContent.trim(), tags: ['from-chat'] });
-          confirmationText = `✅ Saved to your notes: **"${title}"**`;
-        }
+        const confirmationText = await handleNoteCommand(trigger, lastAssistantMsg?.content);
 
         const confirmationMsg: Message = {
           id: `msg-${Date.now() + 1}`,
