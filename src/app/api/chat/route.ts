@@ -15,6 +15,7 @@ interface ChatRequestBody {
   personaSettings?: PersonaInput;
   ragContext?: string;
   currentDateTime?: string;
+  shiftContext?: string;
 }
 
 const BASE_SYSTEM_PROMPT =
@@ -38,11 +39,16 @@ function buildSystemPrompt(
   ragContext: string | undefined,
   includeNickname: boolean,
   standInFor?: string,
-  currentDateTime?: string
+  currentDateTime?: string,
+  shiftContext?: string
 ): string {
   let prompt = BASE_SYSTEM_PROMPT;
   if (currentDateTime) {
     prompt += `\n\nThe current date and time (in the user's local timezone) is: ${currentDateTime}. Use this whenever the user asks about today's date, the current time, day of the week, or anything time-relative ("in 3 days", "how long until...", etc.) — your training data has a cutoff, so always trust this value over any date you might otherwise assume.`;
+  }
+  if (shiftContext) {
+    prompt +=
+      `\n\nThe user currently has an active work shift. Here is its live status — you have read access to this and should use it naturally when asked about the shift or jobdesk, but you cannot check tasks off yourself in normal conversation (that only happens through the separate jobdesk command system):\n\n${shiftContext}`;
   }
   const personaText = buildPersonaPrompt(personaSettings ?? DEFAULT_PERSONA, includeNickname);
   if (personaText) {
@@ -238,7 +244,7 @@ const FALLBACK_CHAIN = ['llama-3.3-70b', 'gpt-oss-120b-groq', 'gemini-pro'];
 export async function POST(req: NextRequest) {
   try {
     const body: ChatRequestBody = await req.json();
-    const { modelId, messages, personaSettings, ragContext, currentDateTime } = body;
+    const { modelId, messages, personaSettings, ragContext, currentDateTime, shiftContext } = body;
 
     if (!messages || messages.length === 0) {
       return NextResponse.json({ error: 'No messages provided' }, { status: 400 });
@@ -262,8 +268,22 @@ export async function POST(req: NextRequest) {
     // Two variants: the primary one includes any nickname the user set for
     // the requested model. The fallback variant omits it — a substitute
     // model has no business claiming a nickname that isn't its own.
-    const primarySystemPrompt = buildSystemPrompt(personaSettings, ragContext, true, undefined, currentDateTime);
-    const fallbackSystemPrompt = buildSystemPrompt(personaSettings, ragContext, false, modelId, currentDateTime);
+    const primarySystemPrompt = buildSystemPrompt(
+      personaSettings,
+      ragContext,
+      true,
+      undefined,
+      currentDateTime,
+      shiftContext
+    );
+    const fallbackSystemPrompt = buildSystemPrompt(
+      personaSettings,
+      ragContext,
+      false,
+      modelId,
+      currentDateTime,
+      shiftContext
+    );
 
     let content = '';
     let actualModelId = modelId;
