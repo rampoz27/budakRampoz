@@ -172,6 +172,34 @@ async function callGemini(messages: ChatMessage[], model: string, systemPrompt: 
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 }
 
+// Single dispatcher used both for the requested model and for any
+// fallback attempts, so both paths share identical call logic.
+async function callModel(modelId: string, messages: ChatMessage[], systemPrompt: string): Promise<string> {
+  const mapped = MODEL_MAP[modelId];
+  if (!mapped) {
+    throw new Error(`Model "${modelId}" is not wired to a provider yet.`);
+  }
+
+  if (mapped.provider === 'openai') return callOpenAI(messages, mapped.model, systemPrompt);
+  if (mapped.provider === 'anthropic') return callAnthropic(messages, mapped.model, systemPrompt);
+  if (mapped.provider === 'groq') return callGroq(messages, mapped.model, systemPrompt);
+  return callGemini(messages, mapped.model, systemPrompt);
+}
+
+// Every call*() function above throws `Error("<Provider> error (<status>): ...")`
+// on a non-OK response — checking for "(429)" in the message is a simple,
+// no-extra-plumbing way to tell "rate limited" apart from other failures
+// (missing key, bad model id, etc.) without needing custom error classes.
+function isRateLimitError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('(429)');
+}
+
+// Free-tier models only, in preference order. 'search-agent' — and the
+// commented-out paid OpenAI/Anthropic models — are deliberately excluded:
+// falling back into a multi-step pipeline or into a model with no API key
+// configured would just trade one failure for another.
+const FALLBACK_CHAIN = ['llama-3.3-70b', 'gpt-oss-120b-groq', 'gemini-pro'];
+
 export async function POST(req: NextRequest) {
   try {
     const body: ChatRequestBody = await req.json();
@@ -198,18 +226,42 @@ export async function POST(req: NextRequest) {
 
     const systemPrompt = buildSystemPrompt(personaPrompt, ragContext);
 
-    let content: string;
-    if (mapped.provider === 'openai') {
-      content = await callOpenAI(messages, mapped.model, systemPrompt);
-    } else if (mapped.provider === 'anthropic') {
-      content = await callAnthropic(messages, mapped.model, systemPrompt);
-    } else if (mapped.provider === 'groq') {
-      content = await callGroq(messages, mapped.model, systemPrompt);
-    } else {
-      content = await callGemini(messages, mapped.model, systemPrompt);
+    let content = '';
+    let actualModelId = modelId;
+
+    try {
+      content = await callModel(modelId, messages, systemPrompt);
+    } catch (err) {
+      if (!isRateLimitError(err)) throw err;
+
+      // Rate-limited — automatically try the other free models instead of
+      // just failing. Never retries the one that just failed, and never
+      // falls back into search-agent.
+      const candidates = FALLBACK_CHAIN.filter((id) => id !== modelId);
+      let succeeded = false;
+      let lastErr: unknown = err;
+
+      for (const candidateId of candidates) {
+        try {
+          content = await callModel(candidateId, messages, systemPrompt);
+          actualModelId = candidateId;
+          succeeded = true;
+          break;
+        } catch (fallbackErr) {
+          lastErr = fallbackErr;
+        }
+      }
+
+      if (!succeeded) throw lastErr;
     }
 
-    return NextResponse.json({ content });
+    // Let the client know a fallback happened so it can show which model
+    // actually answered, instead of silently mislabeling the reply.
+    if (actualModelId !== modelId) {
+      content = `_Note: the model you selected was rate-limited, so this reply came from **${actualModelId}** instead._\n\n${content}`;
+    }
+
+    return NextResponse.json({ content, actualModelId });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown server error';
     console.error('[/api/chat]', message);
