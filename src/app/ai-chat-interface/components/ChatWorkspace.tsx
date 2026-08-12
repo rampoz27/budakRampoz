@@ -355,16 +355,28 @@ export default function ChatWorkspace() {
         return DEFAULT_PERSONA;
       });
 
-      const [, relevantNotes, personaSettings] = await Promise.all([
+      const shiftLookup = fetchActiveShiftSession().catch((err) => {
+        console.error('Shift lookup failed, continuing without it', err);
+        return null;
+      });
+
+      const [, relevantNotes, personaSettings, activeShift] = await Promise.all([
         saveMessage(conv.id, 'user', content, effectiveModel.id),
         notesLookup,
         personaLookup,
+        shiftLookup,
       ]);
 
       const ragContext =
         relevantNotes.length > 0
           ? relevantNotes.map((n) => `Note: "${n.title}"\n${n.content}`).join('\n\n---\n\n')
           : '';
+
+      const shiftContext = activeShift
+        ? `Shift: ${activeShift.shift_name} (started ${new Date(activeShift.started_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })})\nJobdesk status:\n${activeShift.tasks
+            .map((t) => `${t.done ? '✅' : '❌'} ${t.text}${t.done && t.done_by ? ` (checked by ${t.done_by})` : ''}`)
+            .join('\n')}`
+        : '';
 
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -374,6 +386,7 @@ export default function ChatWorkspace() {
           messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
           personaSettings,
           ragContext,
+          shiftContext,
           // Browser's local time — naturally already in the user's own
           // timezone, no conversion needed.
           currentDateTime: new Date().toString(),
