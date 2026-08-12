@@ -16,7 +16,7 @@ import {
   type ShiftTemplateInput,
   type ShiftSessionRow,
   type ShiftTask,
-} from '@/lib/shifts';
+} from '@/lib/supabase/shifts';
 
 type ModalState = ShiftTemplateRow | null | undefined; // undefined = closed, null = creating
 
