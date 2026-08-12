@@ -47,6 +47,20 @@ export async function hasAnyNotes(): Promise<boolean> {
   return (count ?? 0) > 0;
 }
 
+// Fast keyword search (not semantic) — used by the delete/edit chat
+// commands to find which note the user means. Deliberately simple: no
+// embedding call, just a title/content substring match.
+export async function searchNotesByText(query: string): Promise<NoteRow[]> {
+  const { data, error } = await supabase
+    .from('notes')
+    .select('id, user_id, title, content, tags, created_at, updated_at')
+    .or(`title.ilike.%${query}%,content.ilike.%${query}%`)
+    .limit(5);
+
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function fetchNotes(): Promise<NoteRow[]> {
   const { data, error } = await supabase
     .from('notes')
