@@ -21,6 +21,8 @@ import {
   searchNotesByText,
 } from '@/lib/supabase/notes';
 import { mightBeNoteCommand, classifyNoteIntent, type NoteIntentResult } from '@/lib/note-trigger';
+import { mightBeJobdeskCommand } from '@/lib/jobdesk-trigger';
+import { fetchActiveShiftSession, updateSessionTasks } from '@/lib/shifts';
 import { AI_MODELS } from '@/lib/models';
 import {
   fetchConversations,
@@ -274,6 +276,64 @@ export default function ChatWorkspace() {
       }
       // intent.action === 'none' — it just mentioned notes, wasn't a
       // command. Fall through to the normal chat flow below.
+    }
+
+    // Jobdesk commands ("selesai jobdesk...", "checklist tugas...") —
+    // only relevant if there's an active shift with tasks to match against.
+    if (mightBeJobdeskCommand(content)) {
+      try {
+        const activeSession = await fetchActiveShiftSession();
+
+        if (activeSession) {
+          const incompleteTasks = activeSession.tasks.filter((t) => !t.done);
+
+          if (incompleteTasks.length > 0) {
+            const classifyRes = await fetch('/api/classify-jobdesk-intent', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: content,
+                tasks: incompleteTasks.map((t) => ({ id: t.id, text: t.text })),
+              }),
+            });
+            const classification = await classifyRes.json();
+
+            if (classification.action === 'complete' && classification.taskIds?.length > 0) {
+              await saveMessage(conv.id, 'user', content, effectiveModel.id);
+
+              const matchedIds: string[] = classification.taskIds;
+              const updatedTasks = activeSession.tasks.map((t) =>
+                matchedIds.includes(t.id)
+                  ? { ...t, done: true, done_by: 'ai' as const, done_at: new Date().toISOString() }
+                  : t
+              );
+              await updateSessionTasks(activeSession.id, updatedTasks);
+
+              const matchedTexts = activeSession.tasks
+                .filter((t) => matchedIds.includes(t.id))
+                .map((t) => `✅ ${t.text}`)
+                .join('\n');
+              const confirmationText = `Ditandai selesai:\n\n${matchedTexts}`;
+
+              const confirmationMsg: Message = {
+                id: `msg-${Date.now() + 1}`,
+                role: 'assistant',
+                content: confirmationText,
+                timestamp: new Date().toISOString(),
+                model: effectiveModel.id,
+              };
+              setMessages((prev) => [...prev, confirmationMsg]);
+              await saveMessage(conv.id, 'assistant', confirmationText, effectiveModel.id);
+              setIsStreaming(false);
+              return;
+            }
+          }
+        }
+        // No active shift, no incomplete tasks, or classification said
+        // "none" — fall through to the normal chat flow below.
+      } catch (err) {
+        console.error('Jobdesk command handling failed, continuing as normal chat', err);
+      }
     }
 
     try {
