@@ -12,6 +12,7 @@ interface ChatRequestBody {
   modelId: string;
   messages: ChatMessage[];
   personaPrompt?: string;
+  ragContext?: string;
 }
 
 const BASE_SYSTEM_PROMPT = 'You are a very helpful AI assistant, that can help with everything.';
@@ -19,9 +20,20 @@ const BASE_SYSTEM_PROMPT = 'You are a very helpful AI assistant, that can help w
 // Combines the fixed base prompt with the user's custom persona settings
 // (tone, thinking style, custom instructions) so personality stays
 // consistent no matter which model/provider answers the request.
-function buildSystemPrompt(personaPrompt?: string): string {
-  if (!personaPrompt) return BASE_SYSTEM_PROMPT;
-  return `${BASE_SYSTEM_PROMPT}\n\n${personaPrompt}`;
+function buildSystemPrompt(personaPrompt?: string, ragContext?: string): string {
+  let prompt = BASE_SYSTEM_PROMPT;
+  if (personaPrompt) {
+    prompt += `\n\n${personaPrompt}`;
+  }
+  if (ragContext) {
+    // Framed explicitly as background, not established fact — the notes
+    // were found by automatic similarity search and may be outdated,
+    // unrelated, or only partially relevant to the current question.
+    prompt +=
+      '\n\nThe following notes from the user\'s personal knowledge base were found because they seem related to the current question. Use them if genuinely helpful, but do not treat them as guaranteed accurate or as the only source of truth — verify against the actual conversation and say so if something seems outdated or doesn\'t fit:\n\n' +
+      ragContext;
+  }
+  return prompt;
 }
 
 // Maps the model ids used in the UI to the real model id each provider expects.
@@ -31,10 +43,10 @@ const MODEL_MAP: Record<
   string,
   { provider: 'openai' | 'anthropic' | 'gemini' | 'groq'; model: string }
 > = {
-  'gpt-4o': { provider: 'openai', model: 'gpt-4o' },
-  'gpt-4-turbo': { provider: 'openai', model: 'gpt-4-turbo' },
-  'claude-3-5-sonnet': { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' },
-  'claude-3-haiku': { provider: 'anthropic', model: 'claude-3-haiku-20240307' },
+  'gpt-4o': { provider: 'openai', model: 'gpt-5.4-mini' },
+  'gpt-4-turbo': { provider: 'openai', model: 'gpt-5.4' },
+  'claude-3-5-sonnet': { provider: 'anthropic', model: 'claude-sonnet-5' },
+  'claude-3-haiku': { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' },
   'gemini-pro': { provider: 'gemini', model: 'gemini-3.6-flash' },
   'llama-3.3-70b': { provider: 'groq', model: 'llama-3.3-70b-versatile' },
   'gpt-oss-120b-groq': { provider: 'groq', model: 'openai/gpt-oss-120b' },
@@ -163,7 +175,7 @@ async function callGemini(messages: ChatMessage[], model: string, systemPrompt: 
 export async function POST(req: NextRequest) {
   try {
     const body: ChatRequestBody = await req.json();
-    const { modelId, messages, personaPrompt } = body;
+    const { modelId, messages, personaPrompt, ragContext } = body;
 
     if (!messages || messages.length === 0) {
       return NextResponse.json({ error: 'No messages provided' }, { status: 400 });
@@ -184,7 +196,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const systemPrompt = buildSystemPrompt(personaPrompt);
+    const systemPrompt = buildSystemPrompt(personaPrompt, ragContext);
 
     let content: string;
     if (mapped.provider === 'openai') {
