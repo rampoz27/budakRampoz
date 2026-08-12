@@ -15,7 +15,10 @@ interface ChatRequestBody {
   ragContext?: string;
 }
 
-const BASE_SYSTEM_PROMPT = 'You are a very helpful AI assistant, that can help with everything.';
+const BASE_SYSTEM_PROMPT =
+  'You are a very helpful AI assistant, that can help with everything. ' +
+  'You do NOT have the ability to save, edit, or delete notes yourself — that is handled by a separate system outside your control, triggered only when the user explicitly asks to save/edit/delete something. ' +
+  'Never claim or imply that you saved, updated, or stored something (e.g. "this has been saved to your notes") unless you are certain that already happened — when in doubt, say nothing about saving at all.';
 
 // Combines the fixed base prompt with the user's custom persona settings
 // (tone, thinking style, custom instructions) so personality stays
@@ -190,8 +193,16 @@ async function callModel(modelId: string, messages: ChatMessage[], systemPrompt:
 // on a non-OK response — checking for "(429)" in the message is a simple,
 // no-extra-plumbing way to tell "rate limited" apart from other failures
 // (missing key, bad model id, etc.) without needing custom error classes.
+// Every call*() function above throws `Error("<Provider> error (<status>): ...")`
+// on a non-OK response. We trigger fallback for two status codes:
+//   429 — plain rate limit (too many requests)
+//   413 — request too large for the current tokens-per-minute budget
+//         (typically because the conversation history has grown long)
+// Both mean "this model can't serve the request right now", so the same
+// fallback logic applies to either.
 function isRateLimitError(err: unknown): boolean {
-  return err instanceof Error && err.message.includes('(429)');
+  if (!(err instanceof Error)) return false;
+  return err.message.includes('(429)') || err.message.includes('(413)');
 }
 
 // Free-tier models only, in preference order. 'search-agent' — and the
