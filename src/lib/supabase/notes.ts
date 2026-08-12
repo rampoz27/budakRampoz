@@ -1,5 +1,5 @@
 import { supabase } from './client';
-//test
+
 export interface NoteRow {
   id: string;
   user_id: string;
@@ -34,6 +34,17 @@ async function embedText(text: string, taskType: 'RETRIEVAL_DOCUMENT' | 'RETRIEV
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to generate embedding.');
   return data.embedding as number[];
+}
+
+// Lightweight check — used to skip the embedding + search round-trip
+// entirely on every chat message when the user has no notes yet.
+export async function hasAnyNotes(): Promise<boolean> {
+  const { count, error } = await supabase
+    .from('notes')
+    .select('id', { count: 'exact', head: true });
+
+  if (error) throw error;
+  return (count ?? 0) > 0;
 }
 
 export async function fetchNotes(): Promise<NoteRow[]> {
