@@ -22,7 +22,14 @@ import {
 } from '@/lib/supabase/notes';
 import { mightBeNoteCommand, classifyNoteIntent, type NoteIntentResult } from '@/lib/note-trigger';
 import { mightBeJobdeskCommand } from '@/lib/jobdesk-trigger';
-import { fetchActiveShiftSession, updateSessionTasks } from '@/lib/supabase/shifts';
+import { mightBeStartShiftCommand } from '@/lib/shift-trigger';
+import {
+  fetchActiveShiftSession,
+  updateSessionTasks,
+  fetchShiftTemplates,
+  findTemplatesForCurrentTime,
+  startShiftSession,
+} from '@/lib/supabase/shifts';
 import { AI_MODELS } from '@/lib/models';
 import {
   fetchConversations,
@@ -276,6 +283,56 @@ export default function ChatWorkspace() {
       }
       // intent.action === 'none' — it just mentioned notes, wasn't a
       // command. Fall through to the normal chat flow below.
+    }
+
+    // "mulai shift" / "start shift" — auto-picks the template whose time
+    // range covers right now (e.g. Pagi 08:00–20:00, Malam 20:00–08:00)
+    // and starts it, no need to open the Shifts page.
+    if (mightBeStartShiftCommand(content)) {
+      try {
+        const existingSession = await fetchActiveShiftSession();
+
+        let confirmationText: string;
+
+        if (existingSession) {
+          confirmationText = `Kamu udah lagi di **${existingSession.shift_name}** sekarang — akhirin dulu shift itu sebelum mulai yang baru.`;
+        } else {
+          const templates = await fetchShiftTemplates();
+          const matches = findTemplatesForCurrentTime(templates);
+
+          if (matches.length === 0) {
+            const list =
+              templates.length > 0
+                ? templates.map((t) => `- ${t.name} (${t.start_time || '?'}–${t.end_time || '?'})`).join('\n')
+                : '(belum ada template shift sama sekali — bikin dulu di halaman Shift)';
+            confirmationText = `Nggak ada template shift yang jamnya cocok sama sekarang. Template yang ada:\n\n${list}\n\nBuka halaman Shift buat mulai manual, atau atur jam template-nya dulu.`;
+          } else if (matches.length > 1) {
+            const list = matches.map((t) => `- ${t.name} (${t.start_time}–${t.end_time})`).join('\n');
+            confirmationText = `Ada beberapa template yang jamnya overlap sama sekarang, sebutin salah satu:\n\n${list}`;
+          } else {
+            const session = await startShiftSession(matches[0]);
+            confirmationText = `✅ **${session.shift_name}** dimulai (${matches[0].start_time}–${matches[0].end_time}). Ada ${session.tasks.length} jobdesk buat shift ini.`;
+          }
+        }
+
+        await saveMessage(conv.id, 'user', content, effectiveModel.id);
+
+        const confirmationMsg: Message = {
+          id: `msg-${Date.now() + 1}`,
+          role: 'assistant',
+          content: confirmationText,
+          timestamp: new Date().toISOString(),
+          model: effectiveModel.id,
+        };
+        setMessages((prev) => [...prev, confirmationMsg]);
+        await saveMessage(conv.id, 'assistant', confirmationText, effectiveModel.id);
+        setIsStreaming(false);
+        return;
+      } catch (err) {
+        console.error('Start-shift command failed', err);
+        setIsStreaming(false);
+        return;
+      }
     }
 
     // Jobdesk commands ("selesai jobdesk...", "checklist tugas...") —
