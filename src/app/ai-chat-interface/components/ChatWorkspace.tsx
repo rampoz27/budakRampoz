@@ -15,7 +15,7 @@ import {
   updateNote,
   searchNotesByText,
 } from '@/lib/supabase/notes';
-import { detectNoteTrigger } from '@/lib/note-trigger';
+import { mightBeNoteCommand, classifyNoteIntent, type NoteIntentResult } from '@/lib/note-trigger';
 import { AI_MODELS } from '@/lib/models';
 import {
   fetchConversations,
@@ -27,15 +27,15 @@ import {
 } from '@/lib/supabase/conversations';
 import type { Message, AIModel, Conversation } from './chatTypes';
 
-// Executes a matched note command and returns the confirmation text to
+// Executes a classified note command and returns the confirmation text to
 // show in chat. Kept outside the component since it doesn't touch React
 // state directly — just Supabase calls and plain logic.
 async function handleNoteCommand(
-  trigger: ReturnType<typeof detectNoteTrigger>,
+  intent: NoteIntentResult,
   lastAssistantContent: string | undefined
 ): Promise<string> {
-  if (trigger.action === 'add') {
-    const noteContent = trigger.newContent || lastAssistantContent || '';
+  if (intent.action === 'add') {
+    const noteContent = intent.content || lastAssistantContent || '';
     if (!noteContent.trim()) {
       return "I don't have anything to save yet — either write what to save after your command (e.g. \"tambahkan ke note: ...\"), or ask something first so there's a reply to save.";
     }
@@ -44,17 +44,17 @@ async function handleNoteCommand(
     return `✅ Saved to your notes: **"${title}"**`;
   }
 
-  if (trigger.action === 'delete') {
-    if (!trigger.target.trim()) {
+  if (intent.action === 'delete') {
+    if (!intent.target.trim()) {
       return 'Which note should I delete? Try something like "hapus note supabase".';
     }
-    const matches = await searchNotesByText(trigger.target.trim());
+    const matches = await searchNotesByText(intent.target.trim());
     if (matches.length === 0) {
-      return `I couldn't find a note matching "${trigger.target}".`;
+      return `I couldn't find a note matching "${intent.target}".`;
     }
     if (matches.length > 1) {
       const list = matches.map((m) => `- "${m.title}"`).join('\n');
-      return `Found more than one note matching "${trigger.target}" — be more specific:\n\n${list}`;
+      return `Found more than one note matching "${intent.target}" — be more specific:\n\n${list}`;
     }
     const note = matches[0];
     const confirmed = confirm(`Delete note "${note.title}"? This cannot be undone.`);
@@ -63,23 +63,23 @@ async function handleNoteCommand(
     return `🗑️ Deleted note: **"${note.title}"**`;
   }
 
-  if (trigger.action === 'edit') {
-    if (!trigger.target.trim()) {
+  if (intent.action === 'edit') {
+    if (!intent.target.trim()) {
       return 'Which note should I edit? Try something like "edit note supabase: new content here".';
     }
-    if (!trigger.newContent.trim()) {
-      return `Found the note you mean, but I need the new content too — try "edit note ${trigger.target}: <new content>".`;
+    if (!intent.content.trim()) {
+      return `Found the note you mean, but I need the new content too — try "edit note ${intent.target}: <new content>".`;
     }
-    const matches = await searchNotesByText(trigger.target.trim());
+    const matches = await searchNotesByText(intent.target.trim());
     if (matches.length === 0) {
-      return `I couldn't find a note matching "${trigger.target}".`;
+      return `I couldn't find a note matching "${intent.target}".`;
     }
     if (matches.length > 1) {
       const list = matches.map((m) => `- "${m.title}"`).join('\n');
-      return `Found more than one note matching "${trigger.target}" — be more specific:\n\n${list}`;
+      return `Found more than one note matching "${intent.target}" — be more specific:\n\n${list}`;
     }
     const note = matches[0];
-    await updateNote(note.id, { title: note.title, content: trigger.newContent.trim(), tags: note.tags });
+    await updateNote(note.id, { title: note.title, content: intent.content.trim(), tags: note.tags });
     return `✏️ Updated note: **"${note.title}"**`;
   }
 
@@ -221,40 +221,47 @@ export default function ChatWorkspace() {
     setIsStreaming(true);
 
     // Note commands ("tambahkan ke note...", "hapus note...", "edit
-    // note...") are handled entirely locally, no LLM call needed, so
-    // they're near-instant.
-    const trigger = detectNoteTrigger(content);
-    if (trigger.matched) {
-      try {
-        await saveMessage(conv.id, 'user', content, selectedModel.id);
+    // note...") are handled entirely locally — but only after confirming
+    // real intent, since a plain keyword match can't tell a command
+    // ("tambahkan ke note: ...") apart from a question that merely
+    // mentions notes ("udah ketambah note belum?").
+    if (mightBeNoteCommand(content)) {
+      const lastAssistantMsg = [...messages].reverse().find((m) => m.role === 'assistant');
+      const intent = await classifyNoteIntent(content, lastAssistantMsg?.content);
 
-        const lastAssistantMsg = [...messages].reverse().find((m) => m.role === 'assistant');
-        const confirmationText = await handleNoteCommand(trigger, lastAssistantMsg?.content);
+      if (intent.action !== 'none') {
+        try {
+          await saveMessage(conv.id, 'user', content, selectedModel.id);
 
-        const confirmationMsg: Message = {
-          id: `msg-${Date.now() + 1}`,
-          role: 'assistant',
-          content: confirmationText,
-          timestamp: new Date().toISOString(),
-          model: selectedModel.id,
-        };
+          const confirmationText = await handleNoteCommand(intent, lastAssistantMsg?.content);
 
-        setMessages((prev) => [...prev, confirmationMsg]);
-        await saveMessage(conv.id, 'assistant', confirmationText, selectedModel.id);
-        await loadConversations();
-      } catch (err) {
-        const errorMessage: Message = {
-          id: `msg-${Date.now() + 1}`,
-          role: 'assistant',
-          content: `⚠️ ${err instanceof Error ? err.message : 'Failed to save note.'}`,
-          timestamp: new Date().toISOString(),
-          model: selectedModel.id,
-        };
-        setMessages((prev) => [...prev, errorMessage]);
-      } finally {
-        setIsStreaming(false);
+          const confirmationMsg: Message = {
+            id: `msg-${Date.now() + 1}`,
+            role: 'assistant',
+            content: confirmationText,
+            timestamp: new Date().toISOString(),
+            model: selectedModel.id,
+          };
+
+          setMessages((prev) => [...prev, confirmationMsg]);
+          await saveMessage(conv.id, 'assistant', confirmationText, selectedModel.id);
+          await loadConversations();
+        } catch (err) {
+          const errorMessage: Message = {
+            id: `msg-${Date.now() + 1}`,
+            role: 'assistant',
+            content: `⚠️ ${err instanceof Error ? err.message : 'Failed to save note.'}`,
+            timestamp: new Date().toISOString(),
+            model: selectedModel.id,
+          };
+          setMessages((prev) => [...prev, errorMessage]);
+        } finally {
+          setIsStreaming(false);
+        }
+        return;
       }
-      return;
+      // intent.action === 'none' — it just mentioned notes, wasn't a
+      // command. Fall through to the normal chat flow below.
     }
 
     try {
