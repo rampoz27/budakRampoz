@@ -22,7 +22,7 @@ export interface NoteIntentResult {
 
 const NOTE_KEYWORD = /\b(notes?|catatan)\b/i;
 const ANY_NOTE_VERB =
-  /\b(?:ke)?tambah(?:kan|in)?\b|\bsimpan\b|\bcatat\b|\badd\b|\bsave\b|\bhapus\b|\bdelete\b|\bremove\b|\bedit\b|\bubah\b|\bupdate\b|\bganti\b/i;
+  /\b(?:ke)?tambah(?:kan|in)?\b|\b(?:ke)?masuk(?:kan|in)?\b|\btaru[hk](?:in)?\b|\bsimpe?n(?:in)?\b|\bcatat(?:kan|in)?\b|\bcatetin\b|\badd\b|\bsave\b|\bhapus\b|\bdelete\b|\bremove\b|\bedit\b|\bubah\b|\bupdate\b|\bganti\b/i;
 
 // Cheap, synchronous — call this first. Only proceed to
 // classifyNoteIntent() if this returns true.
