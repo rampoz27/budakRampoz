@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runSearchAgent } from '@/lib/ai/search-agent';
+import { buildPersonaPrompt, DEFAULT_PERSONA, type PersonaInput } from '@/lib/persona-format';
 
 export const runtime = 'nodejs';
 
@@ -11,29 +12,35 @@ interface ChatMessage {
 interface ChatRequestBody {
   modelId: string;
   messages: ChatMessage[];
-  personaPrompt?: string;
+  personaSettings?: PersonaInput;
   ragContext?: string;
 }
 
 const BASE_SYSTEM_PROMPT =
   'You are a very helpful AI assistant, that can help with everything. ' +
-  'You do NOT have the ability to save, edit, or delete notes yourself — that is handled by a separate system outside your control, triggered only when the user explicitly asks to save/edit/delete something. ' +
-  'Never claim or imply that you saved, updated, or stored something (e.g. "this has been saved to your notes") unless you are certain that already happened — when in doubt, say nothing about saving at all.';
+  'You cannot directly CREATE, EDIT, or DELETE notes yourself — that only happens through a separate system, triggered when the user explicitly asks to save/edit/delete something. Never claim or imply that you just saved, updated, or deleted something unless you are certain that already happened. ' +
+  'However, if relevant notes ARE provided to you below as background context, you DO have read access to them for this reply — use them normally and do not claim you "cannot see" or "cannot access" notes that are visibly included in your context.';
 
-// Combines the fixed base prompt with the user's custom persona settings
-// (tone, thinking style, custom instructions) so personality stays
-// consistent no matter which model/provider answers the request.
-function buildSystemPrompt(personaPrompt?: string, ragContext?: string): string {
+// Combines the fixed base prompt with the user's persona settings and any
+// RAG context. `includeNickname` MUST be false when building the prompt
+// for a fallback model — otherwise a model standing in for a rate-limited
+// one ends up claiming an identity/nickname that isn't its own.
+function buildSystemPrompt(
+  personaSettings: PersonaInput | undefined,
+  ragContext: string | undefined,
+  includeNickname: boolean
+): string {
   let prompt = BASE_SYSTEM_PROMPT;
-  if (personaPrompt) {
-    prompt += `\n\n${personaPrompt}`;
+  const personaText = buildPersonaPrompt(personaSettings ?? DEFAULT_PERSONA, includeNickname);
+  if (personaText) {
+    prompt += `\n\n${personaText}`;
   }
   if (ragContext) {
     // Framed explicitly as background, not established fact — the notes
     // were found by automatic similarity search and may be outdated,
     // unrelated, or only partially relevant to the current question.
     prompt +=
-      '\n\nThe following notes from the user\'s personal knowledge base were found because they seem related to the current question. Use them if genuinely helpful, but do not treat them as guaranteed accurate or as the only source of truth — verify against the actual conversation and say so if something seems outdated or doesn\'t fit:\n\n' +
+      '\n\nThe following notes from the user\'s personal knowledge base were found because they seem related to the current question. You DO have access to read these — use them if genuinely helpful, but do not treat them as guaranteed accurate or as the only source of truth — verify against the actual conversation and say so if something seems outdated or doesn\'t fit:\n\n' +
       ragContext;
   }
   return prompt;
@@ -214,7 +221,7 @@ const FALLBACK_CHAIN = ['llama-3.3-70b', 'gpt-oss-120b-groq', 'gemini-pro'];
 export async function POST(req: NextRequest) {
   try {
     const body: ChatRequestBody = await req.json();
-    const { modelId, messages, personaPrompt, ragContext } = body;
+    const { modelId, messages, personaSettings, ragContext } = body;
 
     if (!messages || messages.length === 0) {
       return NextResponse.json({ error: 'No messages provided' }, { status: 400 });
@@ -235,13 +242,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const systemPrompt = buildSystemPrompt(personaPrompt, ragContext);
+    // Two variants: the primary one includes any nickname the user set for
+    // the requested model. The fallback variant omits it — a substitute
+    // model has no business claiming a nickname that isn't its own.
+    const primarySystemPrompt = buildSystemPrompt(personaSettings, ragContext, true);
+    const fallbackSystemPrompt = buildSystemPrompt(personaSettings, ragContext, false);
 
     let content = '';
     let actualModelId = modelId;
 
     try {
-      content = await callModel(modelId, messages, systemPrompt);
+      content = await callModel(modelId, messages, primarySystemPrompt);
     } catch (err) {
       if (!isRateLimitError(err)) throw err;
 
@@ -254,7 +265,7 @@ export async function POST(req: NextRequest) {
 
       for (const candidateId of candidates) {
         try {
-          content = await callModel(candidateId, messages, systemPrompt);
+          content = await callModel(candidateId, messages, fallbackSystemPrompt);
           actualModelId = candidateId;
           succeeded = true;
           break;
