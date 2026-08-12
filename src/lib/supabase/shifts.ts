@@ -145,3 +145,41 @@ export async function endShiftSession(sessionId: string): Promise<void> {
 
   if (error) throw error;
 }
+
+// ── Time-based template matching (for "mulai shift" auto-detection) ──
+
+function parseTimeToMinutes(time: string): number | null {
+  const match = time.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function isTimeInRange(nowMinutes: number, startMinutes: number, endMinutes: number): boolean {
+  if (startMinutes <= endMinutes) {
+    // Normal same-day range, e.g. 08:00–20:00
+    return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+  }
+  // Overnight range, e.g. 20:00–08:00 (wraps past midnight)
+  return nowMinutes >= startMinutes || nowMinutes < endMinutes;
+}
+
+// Returns every template whose start_time/end_time range covers the
+// given moment (defaults to now). Templates missing valid times are
+// skipped — they simply can't be auto-matched this way.
+export function findTemplatesForCurrentTime(
+  templates: ShiftTemplateRow[],
+  at: Date = new Date()
+): ShiftTemplateRow[] {
+  const nowMinutes = at.getHours() * 60 + at.getMinutes();
+
+  return templates.filter((t) => {
+    if (!t.start_time || !t.end_time) return false;
+    const start = parseTimeToMinutes(t.start_time);
+    const end = parseTimeToMinutes(t.end_time);
+    if (start === null || end === null) return false;
+    return isTimeInRange(nowMinutes, start, end);
+  });
+}
