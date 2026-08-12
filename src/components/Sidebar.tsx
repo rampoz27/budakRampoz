@@ -26,6 +26,7 @@ const navGroups = [
     items: [
       { href: '/file-analysis', label: 'File Analysis', icon: 'DocumentMagnifyingGlassIcon', badge: null },
       { href: '/code-snippets', label: 'Code Snippets', icon: 'CodeBracketIcon', badge: null },
+      { href: '/notes', label: 'Notes', icon: 'LightBulbIcon', badge: null },
     ],
   },
   {
@@ -71,7 +72,7 @@ export default function Sidebar({ collapsed, onToggleCollapse, activeRoute }: Si
           <AppLogo size={28} />
           {!collapsed && (
             <span className="font-semibold text-base text-foreground truncate tracking-tight">
-              Rampoz AI Agent
+              CodeMind
             </span>
           )}
         </div>
