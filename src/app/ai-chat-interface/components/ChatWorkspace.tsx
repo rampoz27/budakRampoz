@@ -6,7 +6,8 @@ import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import ConversationSidebar from './ConversationSidebar';
 import Icon from '@/components/ui/AppIcon';
-import { fetchPersonaForModel, buildPersonaPrompt } from '@/lib/supabase/ai-settings';
+import { fetchPersonaForModel, buildPersonaPrompt, DEFAULT_PERSONA } from '@/lib/supabase/ai-settings';
+import { detectAddressedModel } from '@/lib/model-address';
 import {
   findRelevantNotes,
   hasAnyNotes,
@@ -195,11 +196,20 @@ export default function ChatWorkspace() {
   const handleSendMessage = async (content: string, files: File[]) => {
     let conv = activeConversation;
 
+    // "gemini, ..." / "llama: ..." — lets a single message override which
+    // model answers, regardless of the dropdown. Computed early so it's
+    // consistent even for the very first message of a new conversation.
+    const addressedModel = detectAddressedModel(content, AI_MODELS);
+    const effectiveModel = addressedModel || selectedModel;
+    if (addressedModel && addressedModel.id !== selectedModel.id) {
+      setSelectedModel(addressedModel); // keep the dropdown in sync going forward
+    }
+
     // Lazily create the conversation on the first message, like ChatGPT/Claude do.
     if (!conv) {
       try {
         const title = content.trim().slice(0, 60) || 'New conversation';
-        conv = await createConversation(title, selectedModel.id);
+        conv = await createConversation(title, effectiveModel.id);
         setActiveConversation(conv);
         setConversations((prev) => [conv as ConversationRow, ...prev]);
       } catch (err) {
@@ -231,7 +241,7 @@ export default function ChatWorkspace() {
 
       if (intent.action !== 'none') {
         try {
-          await saveMessage(conv.id, 'user', content, selectedModel.id);
+          await saveMessage(conv.id, 'user', content, effectiveModel.id);
 
           const confirmationText = await handleNoteCommand(intent, lastAssistantMsg?.content);
 
@@ -240,11 +250,11 @@ export default function ChatWorkspace() {
             role: 'assistant',
             content: confirmationText,
             timestamp: new Date().toISOString(),
-            model: selectedModel.id,
+            model: effectiveModel.id,
           };
 
           setMessages((prev) => [...prev, confirmationMsg]);
-          await saveMessage(conv.id, 'assistant', confirmationText, selectedModel.id);
+          await saveMessage(conv.id, 'assistant', confirmationText, effectiveModel.id);
           await loadConversations();
         } catch (err) {
           const errorMessage: Message = {
@@ -252,7 +262,7 @@ export default function ChatWorkspace() {
             role: 'assistant',
             content: `⚠️ ${err instanceof Error ? err.message : 'Failed to save note.'}`,
             timestamp: new Date().toISOString(),
-            model: selectedModel.id,
+            model: effectiveModel.id,
           };
           setMessages((prev) => [...prev, errorMessage]);
         } finally {
@@ -265,10 +275,12 @@ export default function ChatWorkspace() {
     }
 
     try {
-      // saveMessage and the note lookup don't depend on each other, so run
-      // them concurrently instead of one after another. Skip the lookup
-      // entirely if the user has no notes — no point paying for an
-      // embedding call that can never find anything.
+      // saveMessage, the note lookup, and the persona lookup for whichever
+      // model actually answers this turn don't depend on each other, so
+      // run them concurrently instead of one after another. Fetching
+      // persona fresh here (rather than trusting the `personaPrompt`
+      // state) matters when a message addresses a different model than
+      // the one currently selected — that state hasn't caught up yet.
       const notesLookup = hasNotes
         ? findRelevantNotes(content).catch((err) => {
             console.error('Note lookup failed, continuing without it', err);
@@ -276,9 +288,15 @@ export default function ChatWorkspace() {
           })
         : Promise.resolve([]);
 
-      const [, relevantNotes] = await Promise.all([
-        saveMessage(conv.id, 'user', content, selectedModel.id),
+      const personaLookup = fetchPersonaForModel(effectiveModel.id).catch((err) => {
+        console.error('Persona lookup failed, using defaults', err);
+        return DEFAULT_PERSONA;
+      });
+
+      const [, relevantNotes, personaSettings] = await Promise.all([
+        saveMessage(conv.id, 'user', content, effectiveModel.id),
         notesLookup,
+        personaLookup,
       ]);
 
       const ragContext =
@@ -290,9 +308,9 @@ export default function ChatWorkspace() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          modelId: selectedModel.id,
+          modelId: effectiveModel.id,
           messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
-          personaPrompt,
+          personaPrompt: buildPersonaPrompt(personaSettings),
           ragContext,
         }),
       });
@@ -305,12 +323,12 @@ export default function ChatWorkspace() {
         role: 'assistant',
         content: data.content,
         timestamp: new Date().toISOString(),
-        model: data.actualModelId || selectedModel.id,
+        model: data.actualModelId || effectiveModel.id,
       };
 
       setMessages((prev) => [...prev, aiResponse]);
       setTypingMessageId(aiResponse.id);
-      await saveMessage(conv.id, 'assistant', data.content, data.actualModelId || selectedModel.id);
+      await saveMessage(conv.id, 'assistant', data.content, data.actualModelId || effectiveModel.id);
       await loadConversations();
     } catch (err) {
       const errorMessage: Message = {
@@ -318,7 +336,7 @@ export default function ChatWorkspace() {
         role: 'assistant',
         content: `⚠️ ${err instanceof Error ? err.message : 'Something went wrong reaching the AI.'}`,
         timestamp: new Date().toISOString(),
-        model: selectedModel.id,
+        model: effectiveModel.id,
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
