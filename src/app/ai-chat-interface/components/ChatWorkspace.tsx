@@ -6,7 +6,12 @@ import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import ConversationSidebar from './ConversationSidebar';
 import Icon from '@/components/ui/AppIcon';
-import { fetchPersonaForModel, buildPersonaPrompt, DEFAULT_PERSONA } from '@/lib/supabase/ai-settings';
+import {
+  fetchPersonaForModel,
+  buildPersonaPrompt,
+  DEFAULT_PERSONA,
+  fetchAllNicknames,
+} from '@/lib/supabase/ai-settings';
 import { detectAddressedModel } from '@/lib/model-address';
 import {
   findRelevantNotes,
@@ -111,6 +116,7 @@ export default function ChatWorkspace() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasNotes, setHasNotes] = useState(false);
+  const [nicknames, setNicknames] = useState<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const loadConversations = useCallback(async () => {
@@ -127,6 +133,9 @@ export default function ChatWorkspace() {
     hasAnyNotes()
       .then(setHasNotes)
       .catch((err) => console.error('Failed to check for notes', err));
+    fetchAllNicknames()
+      .then(setNicknames)
+      .catch((err) => console.error('Failed to load model nicknames', err));
   }, [loadConversations]);
 
   // Every time the model changes, load THAT model's persona — this is what
@@ -199,7 +208,7 @@ export default function ChatWorkspace() {
     // "gemini, ..." / "llama: ..." — lets a single message override which
     // model answers, regardless of the dropdown. Computed early so it's
     // consistent even for the very first message of a new conversation.
-    const addressedModel = detectAddressedModel(content, AI_MODELS);
+    const addressedModel = detectAddressedModel(content, AI_MODELS, nicknames);
     const effectiveModel = addressedModel || selectedModel;
     if (addressedModel && addressedModel.id !== selectedModel.id) {
       setSelectedModel(addressedModel); // keep the dropdown in sync going forward
