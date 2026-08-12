@@ -7,6 +7,7 @@ export interface ModelPersonaRow {
   id: string;
   user_id: string;
   model_id: string;
+  nickname: string;
   tone: Tone;
   thinking_style: ThinkingStyle;
   custom_instructions: string;
@@ -14,6 +15,7 @@ export interface ModelPersonaRow {
 }
 
 export interface PersonaInput {
+  nickname: string;
   tone: Tone;
   thinking_style: ThinkingStyle;
   custom_instructions: string;
@@ -50,15 +52,21 @@ const THINKING_TEXT: Record<ThinkingStyle, string> = {
 };
 
 export const DEFAULT_PERSONA: PersonaInput = {
+  nickname: '',
   tone: 'friendly',
   thinking_style: 'concise',
   custom_instructions: '',
 };
 
 // Builds the persona instructions prepended to a request for a specific
-// model — this is what makes each model's personality distinct.
+// model — this is what makes each model's personality (and name) distinct.
 export function buildPersonaPrompt(settings: PersonaInput): string {
   const parts = [TONE_TEXT[settings.tone], THINKING_TEXT[settings.thinking_style]];
+  if (settings.nickname.trim()) {
+    parts.unshift(
+      `You go by the name "${settings.nickname.trim()}" in this conversation — introduce yourself with that name if it comes up, instead of your official model name.`
+    );
+  }
   if (settings.custom_instructions.trim()) {
     parts.push(settings.custom_instructions.trim());
   }
@@ -97,10 +105,25 @@ export async function fetchPersonaForModel(modelId: string): Promise<PersonaInpu
   if (!data) return DEFAULT_PERSONA;
 
   return {
+    nickname: data.nickname ?? '',
     tone: data.tone,
     thinking_style: data.thinking_style,
     custom_instructions: data.custom_instructions,
   };
+}
+
+// Lightweight: just model_id -> nickname, for the ones that have a
+// nickname set. Used by the chat's "call a model by name" addressing —
+// fetched once per session rather than per message.
+export async function fetchAllNicknames(): Promise<Record<string, string>> {
+  const rows = await fetchAllPersonas();
+  const map: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.nickname && row.nickname.trim()) {
+      map[row.model_id] = row.nickname.trim();
+    }
+  }
+  return map;
 }
 
 export async function savePersonaForModel(
