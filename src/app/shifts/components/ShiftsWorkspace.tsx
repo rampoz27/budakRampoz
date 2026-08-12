@@ -16,7 +16,7 @@ import {
   type ShiftTemplateInput,
   type ShiftSessionRow,
   type ShiftTask,
-} from '@/lib/supabase/shifts';
+} from '@/lib/shifts';
 
 type ModalState = ShiftTemplateRow | null | undefined; // undefined = closed, null = creating
 
@@ -25,6 +25,9 @@ function formatTime(iso: string) {
 }
 
 export default function ShiftsWorkspace() {
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>(
+    'default'
+  );
   const [templates, setTemplates] = useState<ShiftTemplateRow[]>([]);
   const [activeSession, setActiveSession] = useState<ShiftSessionRow | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -36,7 +39,46 @@ export default function ShiftsWorkspace() {
 
   useEffect(() => {
     load();
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    } else {
+      setNotificationPermission('unsupported');
+    }
   }, []);
+
+  function handleTestNotification() {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      alert('Browser kamu nggak mendukung Notification API.');
+      return;
+    }
+
+    if (Notification.permission === 'denied') {
+      alert(
+        'Notifikasi diblokir buat situs ini. Klik ikon gembok/info di address bar browser → Site settings → Notifications → Allow, terus refresh halaman ini.'
+      );
+      return;
+    }
+
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then((permission) => {
+        setNotificationPermission(permission);
+        if (permission === 'granted') {
+          new Notification('Test notifikasi CodeMind', {
+            body: 'Kalau kamu lihat ini, notifikasi kamu udah jalan!',
+            icon: '/favicon.ico',
+          });
+        }
+      });
+      return;
+    }
+
+    new Notification('Test notifikasi CodeMind', {
+      body: activeSession
+        ? `Contoh: ${activeSession.tasks.filter((t) => !t.done).length} jobdesk masih belum dicentang di ${activeSession.shift_name}.`
+        : 'Kalau kamu lihat ini, notifikasi kamu udah jalan! (Belum ada shift aktif buat contoh isinya.)',
+      icon: '/favicon.ico',
+    });
+  }
 
   async function load() {
     setIsLoading(true);
@@ -155,6 +197,38 @@ export default function ShiftsWorkspace() {
         <p className="text-sm text-muted-foreground mb-8">
           Track your current shift and jobdesk checklist.
         </p>
+
+        {/* Notification status + test button */}
+        <div className="flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3 mb-5">
+          <div className="flex items-center gap-2">
+            <Icon
+              name={notificationPermission === 'granted' ? 'BellAlertIcon' : 'BellSlashIcon'}
+              size={16}
+              className={notificationPermission === 'granted' ? 'text-positive' : 'text-muted-foreground'}
+            />
+            <div>
+              <p className="text-xs font-medium text-foreground">
+                Notifikasi:{' '}
+                {notificationPermission === 'granted'
+                  ? 'Aktif'
+                  : notificationPermission === 'denied'
+                    ? 'Diblokir'
+                    : notificationPermission === 'unsupported'
+                      ? 'Tidak didukung browser'
+                      : 'Belum diizinkan'}
+              </p>
+              <p className="text-2xs text-muted-foreground">
+                Muncul otomatis jam 06:00–07:59 & 18:00–19:59 kalau ada jobdesk belum selesai
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleTestNotification}
+            className="flex items-center gap-1.5 bg-muted border border-border rounded-lg px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-secondary transition-colors flex-shrink-0"
+          >
+            Test notifikasi
+          </button>
+        </div>
 
         {/* Current shift card */}
         <div className="bg-card border border-border rounded-xl p-5 mb-8">
