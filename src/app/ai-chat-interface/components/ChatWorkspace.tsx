@@ -7,6 +7,7 @@ import ChatInput from './ChatInput';
 import ConversationSidebar from './ConversationSidebar';
 import Icon from '@/components/ui/AppIcon';
 import { fetchPersonaForModel, buildPersonaPrompt } from '@/lib/supabase/ai-settings';
+import { findRelevantNotes } from '@/lib/supabase/notes';
 import { AI_MODELS } from '@/lib/models';
 import {
   fetchConversations,
@@ -151,6 +152,20 @@ export default function ChatWorkspace() {
     try {
       await saveMessage(conv.id, 'user', content, selectedModel.id);
 
+      // Second-brain lookup: find notes semantically related to what the
+      // user just asked, so the AI can use them without being told to.
+      let ragContext = '';
+      try {
+        const relevantNotes = await findRelevantNotes(content);
+        if (relevantNotes.length > 0) {
+          ragContext = relevantNotes
+            .map((n) => `Note: "${n.title}"\n${n.content}`)
+            .join('\n\n---\n\n');
+        }
+      } catch (err) {
+        console.error('Note lookup failed, continuing without it', err);
+      }
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -158,6 +173,7 @@ export default function ChatWorkspace() {
           modelId: selectedModel.id,
           messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
           personaPrompt,
+          ragContext,
         }),
       });
 
