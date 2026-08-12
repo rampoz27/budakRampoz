@@ -7,7 +7,8 @@ import ChatInput from './ChatInput';
 import ConversationSidebar from './ConversationSidebar';
 import Icon from '@/components/ui/AppIcon';
 import { fetchPersonaForModel, buildPersonaPrompt } from '@/lib/supabase/ai-settings';
-import { findRelevantNotes } from '@/lib/supabase/notes';
+import { findRelevantNotes, hasAnyNotes, createNote } from '@/lib/supabase/notes';
+import { detectNoteTrigger } from '@/lib/note-trigger';
 import { AI_MODELS } from '@/lib/models';
 import {
   fetchConversations,
@@ -42,6 +43,7 @@ export default function ChatWorkspace() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [hasNotes, setHasNotes] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const loadConversations = useCallback(async () => {
@@ -55,6 +57,9 @@ export default function ChatWorkspace() {
 
   useEffect(() => {
     loadConversations();
+    hasAnyNotes()
+      .then(setHasNotes)
+      .catch((err) => console.error('Failed to check for notes', err));
   }, [loadConversations]);
 
   // Every time the model changes, load THAT model's persona — this is what
@@ -149,22 +154,73 @@ export default function ChatWorkspace() {
     setMessages(nextMessages);
     setIsStreaming(true);
 
-    try {
-      await saveMessage(conv.id, 'user', content, selectedModel.id);
-
-      // Second-brain lookup: find notes semantically related to what the
-      // user just asked, so the AI can use them without being told to.
-      let ragContext = '';
+    // "tambahkan ke note: ..." / "save this to notes" — handled entirely
+    // locally, no LLM call needed, so it's near-instant.
+    const trigger = detectNoteTrigger(content);
+    if (trigger.matched) {
       try {
-        const relevantNotes = await findRelevantNotes(content);
-        if (relevantNotes.length > 0) {
-          ragContext = relevantNotes
-            .map((n) => `Note: "${n.title}"\n${n.content}`)
-            .join('\n\n---\n\n');
+        await saveMessage(conv.id, 'user', content, selectedModel.id);
+
+        const lastAssistantMsg = [...messages].reverse().find((m) => m.role === 'assistant');
+        const noteContent = trigger.extractedContent || lastAssistantMsg?.content || '';
+
+        let confirmationText: string;
+        if (!noteContent.trim()) {
+          confirmationText =
+            "I don't have anything to save yet — either write what to save after your command (e.g. \"tambahkan ke note: ...\"), or ask something first so there's a reply to save.";
+        } else {
+          const title = noteContent.trim().split('\n')[0].slice(0, 60) || 'Untitled note';
+          await createNote({ title, content: noteContent.trim(), tags: ['from-chat'] });
+          confirmationText = `✅ Saved to your notes: **"${title}"**`;
         }
+
+        const confirmationMsg: Message = {
+          id: `msg-${Date.now() + 1}`,
+          role: 'assistant',
+          content: confirmationText,
+          timestamp: new Date().toISOString(),
+          model: selectedModel.id,
+        };
+
+        setMessages((prev) => [...prev, confirmationMsg]);
+        await saveMessage(conv.id, 'assistant', confirmationText, selectedModel.id);
+        await loadConversations();
       } catch (err) {
-        console.error('Note lookup failed, continuing without it', err);
+        const errorMessage: Message = {
+          id: `msg-${Date.now() + 1}`,
+          role: 'assistant',
+          content: `⚠️ ${err instanceof Error ? err.message : 'Failed to save note.'}`,
+          timestamp: new Date().toISOString(),
+          model: selectedModel.id,
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+      } finally {
+        setIsStreaming(false);
       }
+      return;
+    }
+
+    try {
+      // saveMessage and the note lookup don't depend on each other, so run
+      // them concurrently instead of one after another. Skip the lookup
+      // entirely if the user has no notes — no point paying for an
+      // embedding call that can never find anything.
+      const notesLookup = hasNotes
+        ? findRelevantNotes(content).catch((err) => {
+            console.error('Note lookup failed, continuing without it', err);
+            return [];
+          })
+        : Promise.resolve([]);
+
+      const [, relevantNotes] = await Promise.all([
+        saveMessage(conv.id, 'user', content, selectedModel.id),
+        notesLookup,
+      ]);
+
+      const ragContext =
+        relevantNotes.length > 0
+          ? relevantNotes.map((n) => `Note: "${n.title}"\n${n.content}`).join('\n\n---\n\n')
+          : '';
 
       const res = await fetch('/api/chat', {
         method: 'POST',
