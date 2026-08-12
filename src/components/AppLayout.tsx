@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Sidebar from './Sidebar';
 import Icon from './ui/AppIcon';
 import { supabase } from '@/lib/supabase/client';
+import { fetchActiveShiftSession } from '@/lib/supabase/shifts';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -48,6 +49,70 @@ export default function AppLayout({ children, activeRoute }: AppLayoutProps) {
       listener.subscription.unsubscribe();
     };
   }, [router]);
+
+  // Every jam 6 (06:00 and 18:00), check the active shift for incomplete
+  // jobdesk and fire a browser notification if any remain. Runs as long
+  // as the app is open in some tab — this uses the Web Notifications API,
+  // not a true background push, so it won't fire if the browser/tab is
+  // fully closed.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+
+    if (Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    let lastFiredAt = 0;
+    const REPEAT_INTERVAL_MS = 15 * 60 * 1000; // re-remind every 15 minutes while still active
+
+    // Reminder window: 06:00–07:59 (2h before a Malam shift's 08:00 end)
+    // and 18:00–19:59 (2h before a Pagi shift's 20:00 end). Outside these
+    // hours, no reminders fire at all — this is the "starts at jam 6"
+    // part. Whether it keeps repeating past that is entirely governed by
+    // the shift/task checks below: once the shift ends or every jobdesk
+    // is checked off, fetchActiveShiftSession / incomplete.length simply
+    // stop returning anything to notify about, so it self-stops without
+    // needing to know the shift's exact end time.
+    function isInReminderWindow(hour: number): boolean {
+      return hour === 6 || hour === 7 || hour === 18 || hour === 19;
+    }
+
+    async function checkAndNotify() {
+      if (Notification.permission !== 'granted') return;
+
+      const now = new Date();
+      if (!isInReminderWindow(now.getHours())) return;
+      if (Date.now() - lastFiredAt < REPEAT_INTERVAL_MS) return;
+
+      try {
+        const session = await fetchActiveShiftSession();
+        if (!session) return; // shift already ended — nothing to remind about
+
+        const incomplete = session.tasks.filter((t) => !t.done);
+        if (incomplete.length === 0) return; // everything's checked off — nothing to remind about
+
+        lastFiredAt = Date.now();
+
+        const notif = new Notification('Jobdesk belum selesai!', {
+          body: `${incomplete.length} jobdesk di ${session.shift_name} masih belum dicentang:\n${incomplete
+            .map((t) => `• ${t.text}`)
+            .join('\n')}`,
+          icon: '/favicon.ico',
+        });
+        notif.onclick = () => {
+          window.focus();
+          window.location.href = '/shifts';
+        };
+      } catch (err) {
+        console.error('Failed to check shift for notification', err);
+      }
+    }
+
+    checkAndNotify(); // also check immediately in case the app loads mid-window
+    const interval = setInterval(checkAndNotify, 60_000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   if (!authChecked || !isAuthenticated) {
     return (
