@@ -8,7 +8,6 @@ import ConversationSidebar from './ConversationSidebar';
 import Icon from '@/components/ui/AppIcon';
 import {
   fetchPersonaForModel,
-  buildPersonaPrompt,
   DEFAULT_PERSONA,
   fetchAllNicknames,
 } from '@/lib/supabase/ai-settings';
@@ -109,7 +108,6 @@ function toUiConversation(row: ConversationRow): Conversation {
 export default function ChatWorkspace() {
   const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[0]);
   const [typingMessageId, setTypingMessageId] = useState<string | null>(null);
-  const [personaPrompt, setPersonaPrompt] = useState('');
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [activeConversation, setActiveConversation] = useState<ConversationRow | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -137,20 +135,6 @@ export default function ChatWorkspace() {
       .then(setNicknames)
       .catch((err) => console.error('Failed to load model nicknames', err));
   }, [loadConversations]);
-
-  // Every time the model changes, load THAT model's persona — this is what
-  // makes each model answer with its own personality mid-conversation.
-  useEffect(() => {
-    let isCancelled = false;
-    fetchPersonaForModel(selectedModel.id)
-      .then((settings) => {
-        if (!isCancelled) setPersonaPrompt(buildPersonaPrompt(settings));
-      })
-      .catch((err) => console.error('Failed to load persona for model', selectedModel.id, err));
-    return () => {
-      isCancelled = true;
-    };
-  }, [selectedModel.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -254,6 +238,15 @@ export default function ChatWorkspace() {
 
           const confirmationText = await handleNoteCommand(intent, lastAssistantMsg?.content);
 
+          // Fixes a stale-state bug: hasNotes is only checked once on
+          // mount, so if the user had zero notes when the page loaded and
+          // just created their first one via this chat command, hasNotes
+          // would otherwise stay "false" for the rest of the session —
+          // silently skipping the RAG lookup on every later message.
+          if (intent.action === 'add' && confirmationText.startsWith('✅')) {
+            setHasNotes(true);
+          }
+
           const confirmationMsg: Message = {
             id: `msg-${Date.now() + 1}`,
             role: 'assistant',
@@ -319,7 +312,7 @@ export default function ChatWorkspace() {
         body: JSON.stringify({
           modelId: effectiveModel.id,
           messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
-          personaPrompt: buildPersonaPrompt(personaSettings),
+          personaSettings,
           ragContext,
         }),
       });
