@@ -27,6 +27,7 @@ const navGroups = [
       { href: '/file-analysis', label: 'File Analysis', icon: 'DocumentMagnifyingGlassIcon', badge: null },
       { href: '/code-snippets', label: 'Code Snippets', icon: 'CodeBracketIcon', badge: null },
       { href: '/notes', label: 'Notes', icon: 'LightBulbIcon', badge: null },
+      { href: '/shifts', label: 'Shift', icon: 'ClipboardDocumentCheckIcon', badge: null },
     ],
   },
   {
