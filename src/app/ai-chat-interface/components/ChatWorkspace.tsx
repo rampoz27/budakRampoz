@@ -22,7 +22,7 @@ import {
 } from '@/lib/supabase/notes';
 import { mightBeNoteCommand, classifyNoteIntent, type NoteIntentResult } from '@/lib/note-trigger';
 import { mightBeJobdeskCommand } from '@/lib/jobdesk-trigger';
-import { fetchActiveShiftSession, updateSessionTasks } from '@/lib/shifts';
+import { fetchActiveShiftSession, updateSessionTasks } from '@/lib/supabase/shifts';
 import { AI_MODELS } from '@/lib/models';
 import {
   fetchConversations,
