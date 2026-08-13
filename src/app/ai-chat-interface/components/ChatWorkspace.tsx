@@ -306,22 +306,9 @@ export default function ChatWorkspace() {
             await saveMessage(conv.id, 'user', content, effectiveModel.id);
 
             const label = classification.label || content;
-            const note = await createNote({
-              title: `Alarm: ${label}`,
-              content: `Diingetin buat: ${label}\nWaktu: ${alarmDate.toLocaleString('en-US', {
-                weekday: 'long',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false,
-              })}`,
-              tags: ['alarm'],
-            });
             await createAlarm({
               label,
               alarm_time: alarmDate.toISOString(),
-              note_id: note.id,
             });
 
             const confirmationText = `⏰ Alarm diset: **${label}**\npada ${alarmDate.toLocaleString('en-US', {
@@ -331,7 +318,7 @@ export default function ChatWorkspace() {
               hour: '2-digit',
               minute: '2-digit',
               hour12: false,
-            })}. Note-nya juga udah aku simpen.`;
+            })}.`;
 
             const confirmationMsg: Message = {
               id: `msg-${Date.now() + 1}`,
