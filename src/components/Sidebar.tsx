@@ -28,6 +28,7 @@ const navGroups = [
       { href: '/code-snippets', label: 'Code Snippets', icon: 'CodeBracketIcon', badge: null },
       { href: '/notes', label: 'Notes', icon: 'LightBulbIcon', badge: null },
       { href: '/shifts', label: 'Shift', icon: 'ClipboardDocumentCheckIcon', badge: null },
+      { href: '/alarms', label: 'Alarm', icon: 'ClockIcon', badge: null },
     ],
   },
   {
