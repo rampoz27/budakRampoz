@@ -16,6 +16,7 @@ interface ChatRequestBody {
   ragContext?: string;
   currentDateTime?: string;
   shiftContext?: string;
+  accountsContext?: string;
 }
 
 const BASE_SYSTEM_PROMPT =
@@ -40,7 +41,8 @@ function buildSystemPrompt(
   includeNickname: boolean,
   standInFor?: string,
   currentDateTime?: string,
-  shiftContext?: string
+  shiftContext?: string,
+  accountsContext?: string
 ): string {
   let prompt = BASE_SYSTEM_PROMPT;
   if (currentDateTime) {
@@ -49,6 +51,10 @@ function buildSystemPrompt(
   if (shiftContext) {
     prompt +=
       `\n\nThe user currently has an active work shift. Here is its live status — you have read access to this and should use it naturally when asked about the shift or jobdesk, but you cannot check tasks off yourself in normal conversation (that only happens through the separate jobdesk command system):\n\n${shiftContext}`;
+  }
+  if (accountsContext) {
+    prompt +=
+      `\n\nThe user has the following active bank accounts on file (format: Bank — Account holder name — reference code). The reference code (looks like "{{ACC-xxxxxxxx}}") is a placeholder that a separate system swaps for the real account number before the user ever sees it — you never see the actual digits, and neither does anyone else who can read this conversation. When the user asks for an account's number, respond with the reference code EXACTLY as given (including the curly braces), as if it were the number itself — do not describe it as a code or explain the substitution, just use it naturally in your sentence. Never invent or guess a number of your own:\n\n${accountsContext}`;
   }
   const personaText = buildPersonaPrompt(personaSettings ?? DEFAULT_PERSONA, includeNickname);
   if (personaText) {
@@ -244,7 +250,8 @@ const FALLBACK_CHAIN = ['llama-3.3-70b', 'gpt-oss-120b-groq', 'gemini-pro'];
 export async function POST(req: NextRequest) {
   try {
     const body: ChatRequestBody = await req.json();
-    const { modelId, messages, personaSettings, ragContext, currentDateTime, shiftContext } = body;
+    const { modelId, messages, personaSettings, ragContext, currentDateTime, shiftContext, accountsContext } =
+      body;
 
     if (!messages || messages.length === 0) {
       return NextResponse.json({ error: 'No messages provided' }, { status: 400 });
@@ -274,7 +281,8 @@ export async function POST(req: NextRequest) {
       true,
       undefined,
       currentDateTime,
-      shiftContext
+      shiftContext,
+      accountsContext
     );
     const fallbackSystemPrompt = buildSystemPrompt(
       personaSettings,
@@ -282,7 +290,8 @@ export async function POST(req: NextRequest) {
       false,
       modelId,
       currentDateTime,
-      shiftContext
+      shiftContext,
+      accountsContext
     );
 
     let content = '';
