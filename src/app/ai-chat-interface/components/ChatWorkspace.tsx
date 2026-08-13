@@ -372,29 +372,37 @@ export default function ChatWorkspace() {
           body: JSON.stringify({ message: content }),
         });
         const classification = await classifyRes.json();
+        const accountsToAdd: Array<{ bankName: string; holderName: string; accountNumber: string }> =
+          classification.accounts ?? [];
 
-        if (
-          classification.action === 'add' &&
-          classification.bankName &&
-          classification.holderName &&
-          classification.accountNumber
-        ) {
+        if (classification.action === 'add' && accountsToAdd.length > 0) {
           await saveMessage(conv.id, 'user', content, effectiveModel.id);
 
-          await createBankAccount({
-            bank_name: classification.bankName,
-            account_holder_name: classification.holderName,
-            account_number: classification.accountNumber,
-            screenshot_url: '',
-            status: 'active',
-          });
+          // Batch insert — independent rows, so run them concurrently
+          // instead of one at a time.
+          await Promise.all(
+            accountsToAdd.map((acc) =>
+              createBankAccount({
+                bank_name: acc.bankName,
+                account_holder_name: acc.holderName,
+                account_number: acc.accountNumber,
+                screenshot_url: '',
+                status: 'active',
+              })
+            )
+          );
 
           // Fixes the same stale-state issue we hit with hasNotes: update
           // immediately so this session's RAG-style lookup picks up the
-          // new account on the very next message, not just after reload.
+          // new account(s) on the very next message, not just after reload.
           setHasAccounts(true);
 
-          const confirmationText = `✅ Rekening disimpan: **${classification.bankName} — ${classification.holderName} — ${classification.accountNumber}**`;
+          const confirmationText =
+            accountsToAdd.length === 1
+              ? `✅ Rekening disimpan: **${accountsToAdd[0].bankName} — ${accountsToAdd[0].holderName} — ${accountsToAdd[0].accountNumber}**`
+              : `✅ ${accountsToAdd.length} rekening disimpan:\n\n${accountsToAdd
+                  .map((a) => `- ${a.bankName} — ${a.holderName} — ${a.accountNumber}`)
+                  .join('\n')}`;
 
           const confirmationMsg: Message = {
             id: `msg-${Date.now() + 1}`,
@@ -408,7 +416,7 @@ export default function ChatWorkspace() {
           setIsStreaming(false);
           return;
         }
-        // action === 'none', or a required field was missing — fall
+        // action === 'none', or nothing usable was extracted — fall
         // through to the normal chat flow below.
       } catch (err) {
         console.error('Account command handling failed, continuing as normal chat', err);
