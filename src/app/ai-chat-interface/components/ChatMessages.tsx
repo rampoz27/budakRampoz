@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import Icon from '@/components/ui/AppIcon';
 import CodeBlock from './CodeBlock';
 import type { Message, AIModel } from './chatTypes';
@@ -118,7 +119,7 @@ const markdownComponents = {
 function MarkdownContent({ content }: { content: string }) {
   return (
     <div className="text-sm leading-relaxed space-y-2">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
         {content}
       </ReactMarkdown>
     </div>
