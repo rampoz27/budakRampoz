@@ -26,6 +26,12 @@ import { mightBeStartShiftCommand } from '@/lib/shift-trigger';
 import { mightBeAlarmCommand } from '@/lib/alarm-trigger';
 import { createAlarm } from '@/lib/supabase/alarms';
 import {
+  fetchActiveBankAccounts,
+  hasAnyActiveAccounts,
+  tokenizeAccountsForContext,
+  detokenizeAccountRefs,
+} from '@/lib/supabase/bank-accounts';
+import {
   fetchActiveShiftSession,
   updateSessionTasks,
   fetchShiftTemplates,
@@ -125,6 +131,7 @@ export default function ChatWorkspace() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasNotes, setHasNotes] = useState(false);
+  const [hasAccounts, setHasAccounts] = useState(false);
   const [nicknames, setNicknames] = useState<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -142,6 +149,9 @@ export default function ChatWorkspace() {
     hasAnyNotes()
       .then(setHasNotes)
       .catch((err) => console.error('Failed to check for notes', err));
+    hasAnyActiveAccounts()
+      .then(setHasAccounts)
+      .catch((err) => console.error('Failed to check for accounts', err));
     fetchAllNicknames()
       .then(setNicknames)
       .catch((err) => console.error('Failed to load model nicknames', err));
@@ -160,11 +170,20 @@ export default function ChatWorkspace() {
     setTypingMessageId(null);
     try {
       const rows = await fetchMessages(id);
+
+      // Old assistant messages may still contain {{ACC-xxxxxxxx}} tokens
+      // — swap them back to real numbers for display, same as freshly
+      // received responses.
+      const accountsForDisplay = hasAccounts ? await fetchActiveBankAccounts().catch(() => []) : [];
+
       setMessages(
         rows.map((r) => ({
           id: r.id,
           role: r.role,
-          content: r.content,
+          content:
+            r.role === 'assistant' && accountsForDisplay.length > 0
+              ? detokenizeAccountRefs(r.content, accountsForDisplay)
+              : r.content,
           timestamp: r.created_at,
           model: r.model_id || undefined,
         }))
@@ -472,11 +491,19 @@ export default function ChatWorkspace() {
         return null;
       });
 
-      const [, relevantNotes, personaSettings, activeShift] = await Promise.all([
+      const accountsLookup = hasAccounts
+        ? fetchActiveBankAccounts().catch((err) => {
+            console.error('Account lookup failed, continuing without it', err);
+            return [];
+          })
+        : Promise.resolve([]);
+
+      const [, relevantNotes, personaSettings, activeShift, activeAccounts] = await Promise.all([
         saveMessage(conv.id, 'user', content, effectiveModel.id),
         notesLookup,
         personaLookup,
         shiftLookup,
+        accountsLookup,
       ]);
 
       const ragContext =
@@ -490,6 +517,11 @@ export default function ChatWorkspace() {
             .join('\n')}`
         : '';
 
+      // The AI only ever sees {{ACC-xxxxxxxx}} reference codes here, never
+      // the real account numbers — see tokenizeAccountsForContext.
+      const accountsContext =
+        activeAccounts.length > 0 ? tokenizeAccountsForContext(activeAccounts) : '';
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -499,6 +531,7 @@ export default function ChatWorkspace() {
           personaSettings,
           ragContext,
           shiftContext,
+          accountsContext,
           // Browser's local time — naturally already in the user's own
           // timezone, no conversion needed.
           currentDateTime: new Date().toString(),
@@ -508,10 +541,18 @@ export default function ChatWorkspace() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'The AI request failed.');
 
+      // Save the raw (still-tokenized) response — this is what future
+      // requests resend as history, so real account numbers never touch
+      // any LLM provider, not even indirectly through past conversation
+      // context. Only the CURRENT display gets the real numbers swapped
+      // back in, done entirely in the browser.
+      const displayContent =
+        activeAccounts.length > 0 ? detokenizeAccountRefs(data.content, activeAccounts) : data.content;
+
       const aiResponse: Message = {
         id: `msg-${Date.now() + 1}`,
         role: 'assistant',
-        content: data.content,
+        content: displayContent,
         timestamp: new Date().toISOString(),
         model: data.actualModelId || effectiveModel.id,
       };
