@@ -29,6 +29,7 @@ const navGroups = [
       { href: '/notes', label: 'Notes', icon: 'LightBulbIcon', badge: null },
       { href: '/shifts', label: 'Shift', icon: 'ClipboardDocumentCheckIcon', badge: null },
       { href: '/alarms', label: 'Alarm', icon: 'ClockIcon', badge: null },
+      { href: '/accounts', label: 'Rekening', icon: 'CreditCardIcon', badge: null },
     ],
   },
   {
