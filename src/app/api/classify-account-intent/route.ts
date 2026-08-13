@@ -7,20 +7,21 @@ export async function POST(req: NextRequest) {
     const { message } = (await req.json()) as { message: string };
 
     if (!message) {
-      return NextResponse.json({ action: 'none', bankName: '', holderName: '', accountNumber: '' });
+      return NextResponse.json({ action: 'none', accounts: [] });
     }
 
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey || apiKey.startsWith('your-')) {
-      return NextResponse.json({ action: 'none', bankName: '', holderName: '', accountNumber: '' });
+      return NextResponse.json({ action: 'none', accounts: [] });
     }
 
-    const systemPrompt = `You classify whether a chat message is providing bank account details to save. Respond with STRICT JSON only, no other text: {"action": "add" | "none", "bankName": string, "holderName": string, "accountNumber": string}
+    const systemPrompt = `You classify whether a chat message is providing bank account details to save — possibly MULTIPLE accounts at once (e.g. a pasted list or table with many rows). Respond with STRICT JSON only, no other text: {"action": "add" | "none", "accounts": [{"bankName": string, "holderName": string, "accountNumber": string}]}
 
 Rules:
-- "add": the user is giving a bank name, account holder name, and account number to save as a new account. Extract all three fields as accurately as possible from however they're phrased.
-- "accountNumber" must contain digits only (strip spaces, dashes, or other punctuation).
-- "none": the message is missing the account number, the bank name, or the holder name, or isn't providing account details to save at all. When any required field is missing or unsure, prefer "none" — it's much safer to ask again than to save incomplete or wrong data.`;
+- "add": the user is giving one or more complete bank accounts (bank name + account holder name + account number) to save. Extract EVERY account found in the message into the "accounts" array — a pasted table or list with many rows should produce one array entry per row, not just the first one.
+- Each "accountNumber" must contain digits only (strip spaces, dashes, or other punctuation).
+- Skip any row that's missing the bank name, holder name, or number entirely — don't guess or invent missing fields for it.
+- "none": no complete account was found anywhere in the message. In that case "accounts" should be an empty array.`;
 
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -41,27 +42,38 @@ Rules:
 
     if (!res.ok) {
       console.error('[/api/classify-account-intent] LLM call failed', await res.text());
-      return NextResponse.json({ action: 'none', bankName: '', holderName: '', accountNumber: '' });
+      return NextResponse.json({ action: 'none', accounts: [] });
     }
 
     const data = await res.json();
     const raw = data.choices?.[0]?.message?.content ?? '{}';
 
-    let parsed: { action?: string; bankName?: string; holderName?: string; accountNumber?: string };
+    let parsed: {
+      action?: string;
+      accounts?: Array<{ bankName?: string; holderName?: string; accountNumber?: string }>;
+    };
     try {
       parsed = JSON.parse(raw);
     } catch {
       parsed = {};
     }
 
+    const accounts = Array.isArray(parsed.accounts)
+      ? parsed.accounts
+          .filter((a) => a.bankName && a.holderName && a.accountNumber)
+          .map((a) => ({
+            bankName: a.bankName as string,
+            holderName: a.holderName as string,
+            accountNumber: a.accountNumber as string,
+          }))
+      : [];
+
     return NextResponse.json({
-      action: parsed.action === 'add' ? 'add' : 'none',
-      bankName: parsed.bankName ?? '',
-      holderName: parsed.holderName ?? '',
-      accountNumber: parsed.accountNumber ?? '',
+      action: parsed.action === 'add' && accounts.length > 0 ? 'add' : 'none',
+      accounts,
     });
   } catch (err) {
     console.error('[/api/classify-account-intent]', err);
-    return NextResponse.json({ action: 'none', bankName: '', holderName: '', accountNumber: '' });
+    return NextResponse.json({ action: 'none', accounts: [] });
   }
 }
