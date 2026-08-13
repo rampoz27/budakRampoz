@@ -23,6 +23,8 @@ import {
 import { mightBeNoteCommand, classifyNoteIntent, type NoteIntentResult } from '@/lib/note-trigger';
 import { mightBeJobdeskCommand } from '@/lib/jobdesk-trigger';
 import { mightBeStartShiftCommand } from '@/lib/shift-trigger';
+import { mightBeAlarmCommand } from '@/lib/alarm-trigger';
+import { createAlarm } from '@/lib/supabase/alarms';
 import {
   fetchActiveShiftSession,
   updateSessionTasks,
@@ -283,6 +285,72 @@ export default function ChatWorkspace() {
       }
       // intent.action === 'none' — it just mentioned notes, wasn't a
       // command. Fall through to the normal chat flow below.
+    }
+
+    // "ingatkan aku...", "reminder...", "alarm jam..." — the LLM resolves
+    // the (possibly relative) time expression, we set an alarm AND save a
+    // note about it, both without needing the normal chat round-trip.
+    if (mightBeAlarmCommand(content)) {
+      try {
+        const classifyRes = await fetch('/api/classify-alarm-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: content, currentDateTime: new Date().toString() }),
+        });
+        const classification = await classifyRes.json();
+
+        if (classification.action === 'set_alarm' && classification.alarmDateTime) {
+          const alarmDate = new Date(classification.alarmDateTime);
+
+          if (!Number.isNaN(alarmDate.getTime()) && alarmDate.getTime() > Date.now()) {
+            await saveMessage(conv.id, 'user', content, effectiveModel.id);
+
+            const label = classification.label || content;
+            const note = await createNote({
+              title: `Alarm: ${label}`,
+              content: `Diingetin buat: ${label}\nWaktu: ${alarmDate.toLocaleString('en-US', {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              })}`,
+              tags: ['alarm'],
+            });
+            await createAlarm({
+              label,
+              alarm_time: alarmDate.toISOString(),
+              note_id: note.id,
+            });
+
+            const confirmationText = `⏰ Alarm diset: **${label}**\npada ${alarmDate.toLocaleString('en-US', {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            })}. Note-nya juga udah aku simpen.`;
+
+            const confirmationMsg: Message = {
+              id: `msg-${Date.now() + 1}`,
+              role: 'assistant',
+              content: confirmationText,
+              timestamp: new Date().toISOString(),
+              model: effectiveModel.id,
+            };
+            setMessages((prev) => [...prev, confirmationMsg]);
+            await saveMessage(conv.id, 'assistant', confirmationText, effectiveModel.id);
+            setIsStreaming(false);
+            return;
+          }
+        }
+        // action === 'none', or the time couldn't be resolved to a valid
+        // future datetime — fall through to the normal chat flow below.
+      } catch (err) {
+        console.error('Alarm command handling failed, continuing as normal chat', err);
+      }
     }
 
     // "mulai shift" / "start shift" — auto-picks the template whose time
