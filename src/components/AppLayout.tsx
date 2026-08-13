@@ -6,6 +6,7 @@ import Sidebar from './Sidebar';
 import Icon from './ui/AppIcon';
 import { supabase } from '@/lib/supabase/client';
 import { fetchActiveShiftSession } from '@/lib/supabase/shifts';
+import { fetchPendingAlarms, markAlarmFired } from '@/lib/supabase/alarms';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -112,6 +113,45 @@ export default function AppLayout({ children, activeRoute }: AppLayoutProps) {
     const interval = setInterval(checkAndNotify, 60_000);
 
     return () => clearInterval(interval);
+  }, []);
+
+  // Checks for alarms whose time has arrived and fires a notification for
+  // each, marking them as fired so they don't repeat. Checked every 30s
+  // for reasonably tight timing (alarms are more time-sensitive than the
+  // shift reminder, which only needs minute-level precision).
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+
+    async function checkAlarms() {
+      if (Notification.permission !== 'granted') return;
+
+      try {
+        const pending = await fetchPendingAlarms();
+        const now = Date.now();
+
+        for (const alarm of pending) {
+          if (new Date(alarm.alarm_time).getTime() > now) continue;
+
+          const notif = new Notification('⏰ Alarm!', {
+            body: alarm.label,
+            icon: '/favicon.ico',
+          });
+          notif.onclick = () => {
+            window.focus();
+            window.location.href = '/alarms';
+          };
+
+          await markAlarmFired(alarm.id);
+        }
+      } catch (err) {
+        console.error('Failed to check alarms', err);
+      }
+    }
+
+    checkAlarms();
+    const alarmInterval = setInterval(checkAlarms, 30_000);
+
+    return () => clearInterval(alarmInterval);
   }, []);
 
   if (!authChecked || !isAuthenticated) {
