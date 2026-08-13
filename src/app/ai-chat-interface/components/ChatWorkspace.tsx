@@ -24,10 +24,12 @@ import { mightBeNoteCommand, classifyNoteIntent, type NoteIntentResult } from '@
 import { mightBeJobdeskCommand } from '@/lib/jobdesk-trigger';
 import { mightBeStartShiftCommand } from '@/lib/shift-trigger';
 import { mightBeAlarmCommand } from '@/lib/alarm-trigger';
+import { mightBeAccountCommand } from '@/lib/account-trigger';
 import { createAlarm } from '@/lib/supabase/alarms';
 import {
   fetchActiveBankAccounts,
   hasAnyActiveAccounts,
+  createBankAccount,
   tokenizeAccountsForContext,
   detokenizeAccountRefs,
 } from '@/lib/supabase/bank-accounts';
@@ -356,6 +358,60 @@ export default function ChatWorkspace() {
         // future datetime — fall through to the normal chat flow below.
       } catch (err) {
         console.error('Alarm command handling failed, continuing as normal chat', err);
+      }
+    }
+
+    // "tambahkan rekening BCA atas nama...", "simpan rekening..." — the
+    // LLM extracts bank/name/number from natural phrasing, no need to
+    // open the Rekening page and fill a form.
+    if (mightBeAccountCommand(content)) {
+      try {
+        const classifyRes = await fetch('/api/classify-account-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: content }),
+        });
+        const classification = await classifyRes.json();
+
+        if (
+          classification.action === 'add' &&
+          classification.bankName &&
+          classification.holderName &&
+          classification.accountNumber
+        ) {
+          await saveMessage(conv.id, 'user', content, effectiveModel.id);
+
+          await createBankAccount({
+            bank_name: classification.bankName,
+            account_holder_name: classification.holderName,
+            account_number: classification.accountNumber,
+            screenshot_url: '',
+            status: 'active',
+          });
+
+          // Fixes the same stale-state issue we hit with hasNotes: update
+          // immediately so this session's RAG-style lookup picks up the
+          // new account on the very next message, not just after reload.
+          setHasAccounts(true);
+
+          const confirmationText = `✅ Rekening disimpan: **${classification.bankName} — ${classification.holderName} — ${classification.accountNumber}**`;
+
+          const confirmationMsg: Message = {
+            id: `msg-${Date.now() + 1}`,
+            role: 'assistant',
+            content: confirmationText,
+            timestamp: new Date().toISOString(),
+            model: effectiveModel.id,
+          };
+          setMessages((prev) => [...prev, confirmationMsg]);
+          await saveMessage(conv.id, 'assistant', confirmationText, effectiveModel.id);
+          setIsStreaming(false);
+          return;
+        }
+        // action === 'none', or a required field was missing — fall
+        // through to the normal chat flow below.
+      } catch (err) {
+        console.error('Account command handling failed, continuing as normal chat', err);
       }
     }
 
