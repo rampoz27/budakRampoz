@@ -34,6 +34,7 @@ import {
   createBankAccount,
   tokenizeAccountsForContext,
   detokenizeAccountRefs,
+  sanitizeMalformedAccountTokens,
 } from '@/lib/supabase/bank-accounts';
 import {
   fetchActiveShiftSession,
@@ -181,16 +182,17 @@ export default function ChatWorkspace() {
       const accountsForDisplay = hasAccounts ? await fetchActiveBankAccounts().catch(() => []) : [];
 
       setMessages(
-        rows.map((r) => ({
-          id: r.id,
-          role: r.role,
-          content:
-            r.role === 'assistant' && accountsForDisplay.length > 0
-              ? detokenizeAccountRefs(r.content, accountsForDisplay)
-              : r.content,
-          timestamp: r.created_at,
-          model: r.model_id || undefined,
-        }))
+        rows.map((r) => {
+          if (r.role !== 'assistant') return { id: r.id, role: r.role, content: r.content, timestamp: r.created_at, model: r.model_id || undefined };
+          const sanitized = sanitizeMalformedAccountTokens(r.content);
+          return {
+            id: r.id,
+            role: r.role,
+            content: accountsForDisplay.length > 0 ? detokenizeAccountRefs(sanitized, accountsForDisplay) : sanitized,
+            timestamp: r.created_at,
+            model: r.model_id || undefined,
+          };
+        })
       );
     } catch (err) {
       console.error('Failed to load messages', err);
@@ -654,8 +656,9 @@ export default function ChatWorkspace() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'The AI request failed.');
 
+        const sanitizedContent = sanitizeMalformedAccountTokens(data.content);
         const displayContent =
-          activeAccounts.length > 0 ? detokenizeAccountRefs(data.content, activeAccounts) : data.content;
+          activeAccounts.length > 0 ? detokenizeAccountRefs(sanitizedContent, activeAccounts) : sanitizedContent;
 
         const aiResponse: Message = {
           id: `msg-${Date.now() + 1}`,
@@ -667,7 +670,7 @@ export default function ChatWorkspace() {
 
         setMessages((prev) => [...prev, aiResponse]);
         setTypingMessageId(aiResponse.id); // keep the typewriter reveal just for this one
-        await saveMessage(conv.id, 'assistant', data.content, effectiveModel.id);
+        await saveMessage(conv.id, 'assistant', sanitizedContent, effectiveModel.id);
         await loadConversations();
         return;
       }
@@ -711,11 +714,14 @@ export default function ChatWorkspace() {
 
           if (evt.type === 'chunk' && evt.text) {
             rawAccumulated += evt.text;
-            // Detokenize the WHOLE accumulated text on every update — a
-            // token split across two chunks just won't match the regex
-            // yet, and resolves automatically the moment it completes.
+            // Sanitize + detokenize the WHOLE accumulated text on every
+            // update — a token split across two chunks just won't match
+            // either regex yet, and resolves automatically the moment it
+            // completes (sanitize needs the closing "}}" to even attempt
+            // a match, same as detokenize).
+            const sanitized = sanitizeMalformedAccountTokens(rawAccumulated);
             const displayText =
-              activeAccounts.length > 0 ? detokenizeAccountRefs(rawAccumulated, activeAccounts) : rawAccumulated;
+              activeAccounts.length > 0 ? detokenizeAccountRefs(sanitized, activeAccounts) : sanitized;
 
             if (!streamStarted) {
               streamStarted = true;
@@ -752,10 +758,11 @@ export default function ChatWorkspace() {
           ? `_Note: the model you selected was rate-limited, so this reply came from **${finalModelId}** instead._\n\n`
           : '';
 
+      const sanitizedFinal = sanitizeMalformedAccountTokens(rawAccumulated);
       const finalDisplayText =
         fallbackNote +
-        (activeAccounts.length > 0 ? detokenizeAccountRefs(rawAccumulated, activeAccounts) : rawAccumulated);
-      const finalRawText = fallbackNote + rawAccumulated; // what gets saved to DB — still tokenized
+        (activeAccounts.length > 0 ? detokenizeAccountRefs(sanitizedFinal, activeAccounts) : sanitizedFinal);
+      const finalRawText = fallbackNote + sanitizedFinal; // what gets saved to DB — sanitized, still tokenized
 
       setMessages((prev) =>
         prev.map((m) => (m.id === streamingMsgId ? { ...m, content: finalDisplayText, model: finalModelId } : m))
