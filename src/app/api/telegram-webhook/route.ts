@@ -1,14 +1,6 @@
 import { NextResponse } from 'next/server';
+import { supabase } from '@/lib/supabase/client'; // Sesuaikan path client Supabase Anda
 
-// 1. Tambahkan ini agar saat dibuka di browser (GET Request) tidak 405
-export async function GET() {
-  return NextResponse.json({ 
-    status: 'online', 
-    message: 'Telegram Webhook API is running!' 
-  }, { status: 200 });
-}
-
-// 2. Ini tetap digunakan oleh Telegram saat tombol diklik (POST Request)
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -17,9 +9,17 @@ export async function POST(request: Request) {
       const actionData = body.callback_query.data;
       const senderName = body.callback_query.from.first_name;
 
-      console.log(`Notifikasi masuk dari ${senderName}: ${actionData}`);
+      // 1. Simpan Notifikasi ke Supabase
+      const { error } = await supabase.from('notifications').insert([
+        {
+          title: `Notifikasi dari ${senderName}`,
+          message: `Aksi: ${actionData}`,
+        },
+      ]);
 
-      // Balas ke Telegram agar loading di tombol berhenti
+      if (error) console.error('Error insert to Supabase:', error);
+
+      // 2. Balas ke Telegram
       await fetch(
         `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`,
         {
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             callback_query_id: body.callback_query.id,
-            text: 'Notifikasi berhasil terkirim ke Web!',
+            text: 'Notifikasi dikirim ke Web!',
           }),
         }
       );
@@ -35,7 +35,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
-    console.error('Webhook Error:', error);
     return NextResponse.json({ error: 'Webhook failed' }, { status: 500 });
   }
 }
