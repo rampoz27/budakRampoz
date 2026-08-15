@@ -116,3 +116,18 @@ export function detokenizeAccountRefs(text: string, accounts: BankAccountRow[]):
     return account ? account.account_number : match;
   });
 }
+
+// Safety net beyond just the system prompt: a model can still hallucinate
+// a pseudo-token that LOOKS like "{{ACC-xxxxxxxx}}" but isn't actually one
+// of ours — e.g. wrapping a real number the user themselves typed in that
+// format. Any "{{ACC-...}}"-shaped text that ISN'T exactly 8 hex
+// characters is stripped before it's ever shown or saved, regardless of
+// what digits/characters got stuffed inside it.
+const MALFORMED_TOKEN_PATTERN = /\{\{ACC-[^}]*\}\}/gi;
+const VALID_TOKEN_PATTERN = /^\{\{ACC-[a-f0-9]{8}\}\}$/i;
+
+export function sanitizeMalformedAccountTokens(text: string): string {
+  return text.replace(MALFORMED_TOKEN_PATTERN, (match) =>
+    VALID_TOKEN_PATTERN.test(match) ? match : '[rujukan tidak valid]'
+  );
+}
