@@ -341,12 +341,13 @@ export async function POST(req: NextRequest) {
           }
 
           if (!succeeded) {
-            controller.enqueue(
-              sseEvent({
-                type: 'error',
-                message: lastErr instanceof Error ? lastErr.message : 'All models failed',
-              })
-            );
+            const triedNames = [modelId, ...candidates].join(', ');
+            const friendlyMessage = isRateLimitError(lastErr)
+              ? `Semua model gratis lagi penuh/kena limit saat ini (dicoba: ${triedNames}). Coba lagi dalam beberapa menit, atau tunggu reset limit hariannya.`
+              : `Gagal menghubungi semua model yang dicoba (${triedNames}). Detail teknis: ${
+                  lastErr instanceof Error ? lastErr.message : 'Unknown error'
+                }`;
+            controller.enqueue(sseEvent({ type: 'error', message: friendlyMessage }));
             controller.close();
             return;
           }
