@@ -372,22 +372,32 @@ export default function ChatWorkspace() {
       const candidates = extractCandidateNumbers(content);
       if (candidates.length > 0) {
         try {
-          await saveMessage(conv.id, 'user', content, effectiveModel.id);
+          // Never persist the raw pasted numbers — not even our own
+          // account numbers, and definitely not the other (third-party)
+          // numbers in a pasted list like this. Otherwise they sit in
+          // conversation history forever and get resent to the LLM on
+          // every future message in this chat.
+          const redactedUserText = `[Verifikasi ${candidates.length} nomor rekening]`;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === userMsg.id ? { ...m, content: redactedUserText } : m))
+          );
+          await saveMessage(conv.id, 'user', redactedUserText, effectiveModel.id);
 
           const allAccounts = await fetchBankAccounts();
           const results = candidates.map((num) => {
             const normalized = num.replace(/\D/g, '');
             const match = allAccounts.find((a) => a.account_number.replace(/\D/g, '') === normalized);
-            return { number: num, match };
+            const masked = `***${normalized.slice(-4)}`;
+            return { masked, match };
           });
 
           const lines = results.map((r) =>
             r.match
-              ? `✅ ${r.number} — cocok: **${r.match.bank_name} — ${r.match.account_holder_name}** (${r.match.status === 'active' ? 'Aktif' : 'Di offkan'})`
-              : `❌ ${r.number} — tidak ditemukan di data kami`
+              ? `✅ ${r.masked} — cocok: **${r.match.bank_name} — ${r.match.account_holder_name}** (${r.match.status === 'active' ? 'Aktif' : 'Di offkan'})`
+              : `❌ ${r.masked} — tidak ditemukan di data kami`
           );
 
-          const confirmationText = `Hasil verifikasi (dicek langsung ke data asli, bukan lewat AI):\n\n${lines.join('\n')}`;
+          const confirmationText = `Hasil verifikasi ${candidates.length} nomor (dicek langsung ke data asli, bukan lewat AI):\n\n${lines.join('\n')}`;
 
           const confirmationMsg: Message = {
             id: `msg-${Date.now() + 1}`,
@@ -424,7 +434,15 @@ export default function ChatWorkspace() {
           classification.accounts ?? [];
 
         if (classification.action === 'add' && accountsToAdd.length > 0) {
-          await saveMessage(conv.id, 'user', content, effectiveModel.id);
+          // Same reasoning as the verify command: never persist the raw
+          // typed message (it contains the real account number(s)) — that
+          // text would otherwise sit in history and get resent to the LLM
+          // on every future message in this conversation.
+          const redactedUserText = `[Menambahkan ${accountsToAdd.length} rekening baru]`;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === userMsg.id ? { ...m, content: redactedUserText } : m))
+          );
+          await saveMessage(conv.id, 'user', redactedUserText, effectiveModel.id);
 
           // Batch insert — independent rows, so run them concurrently
           // instead of one at a time.
@@ -445,11 +463,14 @@ export default function ChatWorkspace() {
           // new account(s) on the very next message, not just after reload.
           setHasAccounts(true);
 
+          // Mask the number in the confirmation too — this also gets
+          // saved to DB, so full digits shouldn't be in there either.
+          const maskNum = (n: string) => `***${n.replace(/\D/g, '').slice(-4)}`;
           const confirmationText =
             accountsToAdd.length === 1
-              ? `✅ Rekening disimpan: **${accountsToAdd[0].bankName} — ${accountsToAdd[0].holderName} — ${accountsToAdd[0].accountNumber}**`
+              ? `✅ Rekening disimpan: **${accountsToAdd[0].bankName} — ${accountsToAdd[0].holderName} — ${maskNum(accountsToAdd[0].accountNumber)}**`
               : `✅ ${accountsToAdd.length} rekening disimpan:\n\n${accountsToAdd
-                  .map((a) => `- ${a.bankName} — ${a.holderName} — ${a.accountNumber}`)
+                  .map((a) => `- ${a.bankName} — ${a.holderName} — ${maskNum(a.accountNumber)}`)
                   .join('\n')}`;
 
           const confirmationMsg: Message = {
