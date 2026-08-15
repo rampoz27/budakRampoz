@@ -309,8 +309,7 @@ export default function ChatWorkspace() {
     }
 
     // "ingatkan aku...", "reminder...", "alarm jam..." — the LLM resolves
-    // the (possibly relative) time expression, we set an alarm AND save a
-    // note about it, both without needing the normal chat round-trip.
+    // the (possibly relative) time expression, we set an alarm.
     if (mightBeAlarmCommand(content)) {
       try {
         const classifyRes = await fetch('/api/classify-alarm-intent', {
@@ -535,9 +534,9 @@ export default function ChatWorkspace() {
       // saveMessage, the note lookup, and the persona lookup for whichever
       // model actually answers this turn don't depend on each other, so
       // run them concurrently instead of one after another. Fetching
-      // persona fresh here (rather than trusting the `personaPrompt`
-      // state) matters when a message addresses a different model than
-      // the one currently selected — that state hasn't caught up yet.
+      // persona fresh here (rather than trusting stale state) matters
+      // when a message addresses a different model than the one currently
+      // selected — that state hasn't caught up yet.
       const notesLookup = hasNotes
         ? findRelevantNotes(content).catch((err) => {
             console.error('Note lookup failed, continuing without it', err);
@@ -602,28 +601,120 @@ export default function ChatWorkspace() {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'The AI request failed.');
+      // search-agent still returns a single JSON blob (multi-step
+      // pipeline, not stream-friendly) — everything else is real SSE.
+      if (effectiveModel.id === 'search-agent') {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'The AI request failed.');
 
-      // Save the raw (still-tokenized) response — this is what future
-      // requests resend as history, so real account numbers never touch
-      // any LLM provider, not even indirectly through past conversation
-      // context. Only the CURRENT display gets the real numbers swapped
-      // back in, done entirely in the browser.
-      const displayContent =
-        activeAccounts.length > 0 ? detokenizeAccountRefs(data.content, activeAccounts) : data.content;
+        const displayContent =
+          activeAccounts.length > 0 ? detokenizeAccountRefs(data.content, activeAccounts) : data.content;
 
-      const aiResponse: Message = {
-        id: `msg-${Date.now() + 1}`,
-        role: 'assistant',
-        content: displayContent,
-        timestamp: new Date().toISOString(),
-        model: data.actualModelId || effectiveModel.id,
-      };
+        const aiResponse: Message = {
+          id: `msg-${Date.now() + 1}`,
+          role: 'assistant',
+          content: displayContent,
+          timestamp: new Date().toISOString(),
+          model: effectiveModel.id,
+        };
 
-      setMessages((prev) => [...prev, aiResponse]);
-      setTypingMessageId(aiResponse.id);
-      await saveMessage(conv.id, 'assistant', data.content, data.actualModelId || effectiveModel.id);
+        setMessages((prev) => [...prev, aiResponse]);
+        setTypingMessageId(aiResponse.id); // keep the typewriter reveal just for this one
+        await saveMessage(conv.id, 'assistant', data.content, effectiveModel.id);
+        await loadConversations();
+        return;
+      }
+
+      if (!res.ok || !res.body) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'The AI request failed.');
+      }
+
+      // ── Real SSE streaming: read chunks as they arrive and grow the
+      //    message in place. No fake typewriter timer needed — the
+      //    network itself is what's "typing".
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let rawAccumulated = ''; // raw, still-tokenized text — this is what gets saved to DB
+      let finalModelId = effectiveModel.id;
+      let streamError: string | null = null;
+      let streamStarted = false;
+      const streamingMsgId = `msg-${Date.now() + 1}`;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const dataStr = trimmed.slice(5).trim();
+          if (!dataStr) continue;
+
+          let evt: { type?: string; text?: string; actualModelId?: string; message?: string };
+          try {
+            evt = JSON.parse(dataStr);
+          } catch {
+            continue; // ignore a malformed/partial SSE line
+          }
+
+          if (evt.type === 'chunk' && evt.text) {
+            rawAccumulated += evt.text;
+            // Detokenize the WHOLE accumulated text on every update — a
+            // token split across two chunks just won't match the regex
+            // yet, and resolves automatically the moment it completes.
+            const displayText =
+              activeAccounts.length > 0 ? detokenizeAccountRefs(rawAccumulated, activeAccounts) : rawAccumulated;
+
+            if (!streamStarted) {
+              streamStarted = true;
+              setIsStreaming(false); // swap the "thinking..." dots for the real growing bubble
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: streamingMsgId,
+                  role: 'assistant',
+                  content: displayText,
+                  timestamp: new Date().toISOString(),
+                  model: effectiveModel.id,
+                },
+              ]);
+            } else {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === streamingMsgId ? { ...m, content: displayText } : m))
+              );
+            }
+          } else if (evt.type === 'done' && evt.actualModelId) {
+            finalModelId = evt.actualModelId;
+          } else if (evt.type === 'error' && evt.message) {
+            streamError = evt.message;
+          }
+        }
+      }
+
+      if (streamError) throw new Error(streamError);
+
+      // Fallback note, if a different model ended up answering — decided
+      // only now that we know the final actualModelId.
+      const fallbackNote =
+        finalModelId !== effectiveModel.id
+          ? `_Note: the model you selected was rate-limited, so this reply came from **${finalModelId}** instead._\n\n`
+          : '';
+
+      const finalDisplayText =
+        fallbackNote +
+        (activeAccounts.length > 0 ? detokenizeAccountRefs(rawAccumulated, activeAccounts) : rawAccumulated);
+      const finalRawText = fallbackNote + rawAccumulated; // what gets saved to DB — still tokenized
+
+      setMessages((prev) =>
+        prev.map((m) => (m.id === streamingMsgId ? { ...m, content: finalDisplayText, model: finalModelId } : m))
+      );
+
+      await saveMessage(conv.id, 'assistant', finalRawText, finalModelId);
       await loadConversations();
     } catch (err) {
       const errorMessage: Message = {
