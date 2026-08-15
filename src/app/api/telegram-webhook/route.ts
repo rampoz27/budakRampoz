@@ -1,21 +1,25 @@
 import { NextResponse } from 'next/server';
 
-// Next.js App Router menggunakan export POST untuk HTTP POST Request
+// 1. Tambahkan ini agar saat dibuka di browser (GET Request) tidak 405
+export async function GET() {
+  return NextResponse.json({ 
+    status: 'online', 
+    message: 'Telegram Webhook API is running!' 
+  }, { status: 200 });
+}
+
+// 2. Ini tetap digunakan oleh Telegram saat tombol diklik (POST Request)
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    // Cek jika ada aksi tombol (callback_query)
     if (body.callback_query) {
       const actionData = body.callback_query.data;
       const senderName = body.callback_query.from.first_name;
 
       console.log(`Notifikasi masuk dari ${senderName}: ${actionData}`);
 
-      // TODO: Anda bisa menyimpan notifikasi ini ke Supabase
-      // misal: await supabase.from('notifications').insert(...)
-
-      // Memberi respon balik ke Telegram agar loading tombol berhenti
+      // Balas ke Telegram agar loading di tombol berhenti
       await fetch(
         `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`,
         {
@@ -23,7 +27,7 @@ export async function POST(request: Request) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             callback_query_id: body.callback_query.id,
-            text: 'Notifikasi berhasil terkirim!',
+            text: 'Notifikasi berhasil terkirim ke Web!',
           }),
         }
       );
