@@ -25,9 +25,11 @@ import { mightBeJobdeskCommand } from '@/lib/jobdesk-trigger';
 import { mightBeStartShiftCommand } from '@/lib/shift-trigger';
 import { mightBeAlarmCommand } from '@/lib/alarm-trigger';
 import { mightBeAccountCommand } from '@/lib/account-trigger';
+import { mightBeAccountVerifyCommand, extractCandidateNumbers } from '@/lib/account-verify-trigger';
 import { createAlarm } from '@/lib/supabase/alarms';
 import {
   fetchActiveBankAccounts,
+  fetchBankAccounts,
   hasAnyActiveAccounts,
   createBankAccount,
   tokenizeAccountsForContext,
@@ -358,6 +360,51 @@ export default function ChatWorkspace() {
       } catch (err) {
         console.error('Alarm command handling failed, continuing as normal chat', err);
       }
+    }
+
+    // "cocokkan rekening ini...", "verifikasi rekening..." — checks
+    // pasted numbers against the REAL stored numbers directly (no LLM
+    // involved), since the AI itself never sees real account digits and
+    // can't reliably do this comparison.
+    if (mightBeAccountVerifyCommand(content)) {
+      const candidates = extractCandidateNumbers(content);
+      if (candidates.length > 0) {
+        try {
+          await saveMessage(conv.id, 'user', content, effectiveModel.id);
+
+          const allAccounts = await fetchBankAccounts();
+          const results = candidates.map((num) => {
+            const normalized = num.replace(/\D/g, '');
+            const match = allAccounts.find((a) => a.account_number.replace(/\D/g, '') === normalized);
+            return { number: num, match };
+          });
+
+          const lines = results.map((r) =>
+            r.match
+              ? `✅ ${r.number} — cocok: **${r.match.bank_name} — ${r.match.account_holder_name}** (${r.match.status === 'active' ? 'Aktif' : 'Di offkan'})`
+              : `❌ ${r.number} — tidak ditemukan di data kami`
+          );
+
+          const confirmationText = `Hasil verifikasi (dicek langsung ke data asli, bukan lewat AI):\n\n${lines.join('\n')}`;
+
+          const confirmationMsg: Message = {
+            id: `msg-${Date.now() + 1}`,
+            role: 'assistant',
+            content: confirmationText,
+            timestamp: new Date().toISOString(),
+            model: effectiveModel.id,
+          };
+          setMessages((prev) => [...prev, confirmationMsg]);
+          await saveMessage(conv.id, 'assistant', confirmationText, effectiveModel.id);
+          setIsStreaming(false);
+          return;
+        } catch (err) {
+          console.error('Account verification failed', err);
+          setIsStreaming(false);
+          return;
+        }
+      }
+      // No digit sequences found — fall through to the normal chat flow.
     }
 
     // "tambahkan rekening BCA atas nama...", "simpan rekening..." — the
