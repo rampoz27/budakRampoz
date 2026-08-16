@@ -18,5 +18,5 @@ export const AI_MODELS: AIModel[] = [
   { id: 'gpt-oss-120b-groq', name: 'GPT-OSS 120B', provider: 'Groq', color: '#F55036', badge: 'Reasoning' },
   { id: 'search-agent', name: 'AI Search Agent', provider: 'CodeMind', color: '#22C55E', badge: '2-step' },
   { id: 'simple-qa', name: 'Simple Q&A (Buatan Sendiri)', provider: 'Kamu', color: '#EAB308', badge: 'Eksperimental' },
-  { id: 'simple-qa-js', name: 'Simple Q&A JS (Neural Net)', provider: 'Kamu', color: '#F59E0B', badge: 'Built-in' },
+  { id: 'simple-qa-js', name: 'Simple Q&A JS (Ensemble)', provider: 'Kamu', color: '#F59E0B', badge: 'Eksperimental' },
 ];
