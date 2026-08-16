@@ -35,6 +35,7 @@ const MODEL_COLORS: Record<string, string> = {
   'gpt-oss-120b-groq': '#F55036',
   'search-agent': '#22C55E',
   'simple-qa': '#EAB308',
+  'simple-qa-js': '#F59E0B',
 };
 
 const MODEL_NAMES: Record<string, string> = {
@@ -47,6 +48,7 @@ const MODEL_NAMES: Record<string, string> = {
   'gpt-oss-120b-groq': 'GPT-OSS 120B',
   'search-agent': 'Search Agent',
   'simple-qa': 'Simple Q&A',
+  'simple-qa-js': 'Simple Q&A JS',
 };
 
 const markdownComponents = {
