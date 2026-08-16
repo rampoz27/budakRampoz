@@ -49,10 +49,9 @@ function buildSystemPrompt(
   }
   if (accountsContext) {
     prompt +=
-      `\n\nThe user has the following active bank accounts on file (format: Bank — Account holder name — reference code). The reference code (looks like "{{ACC-xxxxxxxx}}", always exactly 8 hex characters) is a placeholder that a separate system swaps for the real account number before the user ever sees it — you never see the actual digits, and neither does anyone else who can read this conversation. ` +
-      `ONLY when the user explicitly and directly asks for an account's number (e.g. "what's the number for X", "kasih nomor rekening X") should you output the reference code — copy it EXACTLY as given, 8 hex characters, no more and no fewer, never modify or rebuild it. Never invent, guess, or construct a reference code yourself, and never combine it with any digits you see elsewhere in the conversation (including numbers the user themselves typed) — a reference code is only ever valid if it's an exact copy of one listed below. ` +
-      `For every OTHER kind of task — verification, matching a list the user pasted, comparison, or just discussing/listing which accounts exist — do NOT output any number or reference code at all, not even a mangled one. Refer to accounts by bank name and holder name only in those cases. Because you never see the real digits, you also cannot reliably verify whether a number the user pastes matches one of these accounts — don't attempt that comparison or claim a result either way. If the user pastes numbers and asks you to check/verify/match them, tell them plainly to use the account verification command instead (e.g. "cocokkan rekening ini: ...") which checks against the real stored numbers directly. ` +
-      `Never use the words "placeholder", "reference code", "token", or explain the substitution mechanism — just use the code naturally as a number when that's genuinely what was asked for, and omit numbers entirely otherwise:\n\n${accountsContext}`;
+      `\n\nThe user has the following active bank accounts on file (format: Bank — Account holder name — reference code). The reference code (looks like "{{ACC-xxxxxxxx}}") is a placeholder that a separate system swaps for the real account number before the user ever sees it — you never see the actual digits, and neither does anyone else who can read this conversation. Always use the reference code EXACTLY as given (including the curly braces) in place of the number, as if it genuinely were the account number — never invent or guess a number of your own. ` +
+      `Because you never see the real digits, you CANNOT reliably verify whether a number the user pastes matches one of these accounts — a reference code will never string-match a real number, so don't attempt that comparison or claim a result either way. If the user pastes numbers and asks you to check/verify/match them against saved accounts, tell them plainly to use the account verification command instead (e.g. "cocokkan rekening ini: ...") which does an exact check against the real stored numbers, rather than attempting the comparison yourself. ` +
+      `For simple lookups (e.g. "what's the number for X"), just state the reference code naturally as if it were the number — never use the words "placeholder", "reference code", "token", or explain the substitution mechanism:\n\n${accountsContext}`;
   }
   const personaText = buildPersonaPrompt(personaSettings ?? DEFAULT_PERSONA, includeNickname);
   if (personaText) {
@@ -70,7 +69,10 @@ function buildSystemPrompt(
   return prompt;
 }
 
-const MODEL_MAP: Record<string, { provider: 'openai' | 'anthropic' | 'groq' | 'gemini'; model: string }> = {
+const MODEL_MAP: Record<
+  string,
+  { provider: 'openai' | 'anthropic' | 'groq' | 'gemini' | 'custom-qa'; model: string }
+> = {
   'gpt-4o': { provider: 'openai', model: 'gpt-5.4-mini' },
   'gpt-4-turbo': { provider: 'openai', model: 'gpt-5.4' },
   'claude-3-5-sonnet': { provider: 'anthropic', model: 'claude-sonnet-5' },
@@ -78,6 +80,7 @@ const MODEL_MAP: Record<string, { provider: 'openai' | 'anthropic' | 'groq' | 'g
   'gemini-pro': { provider: 'gemini', model: 'gemini-3.6-flash' },
   'llama-3.3-70b': { provider: 'groq', model: 'llama-3.3-70b-versatile' },
   'gpt-oss-120b-groq': { provider: 'groq', model: 'openai/gpt-oss-120b' },
+  'simple-qa': { provider: 'custom-qa', model: 'simple-qa-v1' },
 };
 
 const encoder = new TextEncoder();
@@ -228,6 +231,47 @@ async function streamGemini(
   }
 }
 
+// Calls the user's own self-hosted Q&A API (a TF-IDF matcher, not a real
+// LLM — see the simple-ai-qa project). It doesn't stream token-by-token,
+// it just answers instantly, so we send its whole answer as a single SSE
+// chunk — the client can't tell the difference. It also has no concept
+// of persona/context/conversation history, so systemPrompt is unused —
+// only the user's latest message is sent.
+async function streamCustomQA(
+  messages: ChatMessage[],
+  controller: ReadableStreamDefaultController
+): Promise<void> {
+  const apiUrl = process.env.SIMPLE_QA_API_URL;
+  if (!apiUrl) {
+    throw new Error('SIMPLE_QA_API_URL is missing. Add it to your .env file.');
+  }
+
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+  if (!lastUserMessage) {
+    throw new Error('No user message found to ask.');
+  }
+
+  const res = await fetch(`${apiUrl.replace(/\/$/, '')}/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: lastUserMessage.content }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Simple Q&A API error (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  const confidencePercent = Math.round((data.confidence ?? 0) * 100);
+  const text =
+    data.confidence >= 0.3 && data.matched_question
+      ? `${data.answer}\n\n_(cocok ${confidencePercent}% dengan pertanyaan yang aku pelajari: "${data.matched_question}")_`
+      : data.answer;
+
+  controller.enqueue(sseEvent({ type: 'chunk', text }));
+}
+
 // Single dispatcher used both for the requested model and for any
 // fallback attempts, so both paths share identical call logic.
 async function streamModel(
@@ -242,6 +286,7 @@ async function streamModel(
   }
   if (mapped.provider === 'groq') return streamGroq(messages, mapped.model, systemPrompt, controller);
   if (mapped.provider === 'gemini') return streamGemini(messages, mapped.model, systemPrompt, controller);
+  if (mapped.provider === 'custom-qa') return streamCustomQA(messages, controller);
   throw new Error(`Streaming isn't implemented for provider "${mapped.provider}" yet (no API key configured anyway).`);
 }
 
@@ -251,6 +296,14 @@ async function streamModel(
 function isRateLimitError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return err.message.includes('(429)') || err.message.includes('(413)');
+}
+
+// simple-qa is a personal, hobby-hosted service (e.g. Render free tier,
+// which sleeps when idle and can time out on cold start) — much less
+// reliable than the real providers. Any failure from it is worth falling
+// back on, not just rate-limit-shaped ones.
+function shouldFallback(modelId: string, err: unknown): boolean {
+  return modelId === 'simple-qa' || isRateLimitError(err);
 }
 
 // Free-tier models only, in preference order. 'search-agent' — and the
@@ -304,7 +357,7 @@ export async function POST(req: NextRequest) {
           await streamModel(modelId, messages, primarySystemPrompt, controller);
           succeeded = true;
         } catch (err) {
-          if (!isRateLimitError(err)) {
+          if (!shouldFallback(modelId, err)) {
             controller.enqueue(
               sseEvent({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' })
             );
