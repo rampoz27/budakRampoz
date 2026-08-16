@@ -24,8 +24,7 @@
       "postcss",
       "eslint",
       "prettier",
-      "@netlify/plugin-nextjs",
-      "@huggingface/transformers": "^4.x.x"
+      "@netlify/plugin-nextjs"
     ],
     "scripts": [
       "dev",
@@ -66,7 +65,8 @@
     "recharts": "^2.15.2",
     "remark-gfm": "^4.0.1",
     "sonner": "^1.7.4",
-    "remark-breaks": "^4.0.0"
+    "remark-breaks": "^4.0.0",
+    "@huggingface/transformers": "^4.x.x"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
