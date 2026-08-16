@@ -22,6 +22,8 @@ const BUILTIN_ALIASES: Record<string, string> = {
   'search agent': 'search-agent',
   searchagent: 'search-agent',
   'model sendiri': 'simple-qa',
+  'qa js': 'simple-qa-js',
+  'model js': 'simple-qa-js',
   'simple qa': 'simple-qa',
   'qa bot': 'simple-qa',
 };
