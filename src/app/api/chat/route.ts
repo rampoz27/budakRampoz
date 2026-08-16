@@ -71,7 +71,7 @@ function buildSystemPrompt(
 
 const MODEL_MAP: Record<
   string,
-  { provider: 'openai' | 'anthropic' | 'groq' | 'gemini' | 'custom-qa'; model: string }
+  { provider: 'openai' | 'anthropic' | 'groq' | 'gemini' | 'custom-qa' | 'js-embedding'; model: string }
 > = {
   'gpt-4o': { provider: 'openai', model: 'gpt-5.4-mini' },
   'gpt-4-turbo': { provider: 'openai', model: 'gpt-5.4' },
@@ -81,6 +81,7 @@ const MODEL_MAP: Record<
   'llama-3.3-70b': { provider: 'groq', model: 'llama-3.3-70b-versatile' },
   'gpt-oss-120b-groq': { provider: 'groq', model: 'openai/gpt-oss-120b' },
   'simple-qa': { provider: 'custom-qa', model: 'simple-qa-v1' },
+  'simple-qa-js': { provider: 'js-embedding', model: 'simple-qa-js-v1' },
 };
 
 const encoder = new TextEncoder();
@@ -272,6 +273,30 @@ async function streamCustomQA(
   controller.enqueue(sseEvent({ type: 'chunk', text }));
 }
 
+// Same idea as streamCustomQA, but for the Transformers.js version — no
+// HTTP call needed since it's the SAME Next.js app/process, just a
+// direct function call. Dynamic import so the (fairly large) transformers
+// library only ever loads into memory if this specific model is used.
+async function streamJsEmbeddingQA(
+  messages: ChatMessage[],
+  controller: ReadableStreamDefaultController
+): Promise<void> {
+  const { matchQuestion } = await import('@/lib/simple-qa-js');
+
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+  if (!lastUserMessage) {
+    throw new Error('No user message found to ask.');
+  }
+
+  const result = await matchQuestion(lastUserMessage.content);
+  const confidencePercent = Math.round(result.confidence * 100);
+  const text = result.matchedQuestion
+    ? `${result.answer}\n\n_(cocok ${confidencePercent}% dengan: "${result.matchedQuestion}" — embedding: ${Math.round(result.embeddingScore * 100)}%, TF-IDF: ${Math.round(result.tfidfScore * 100)}%)_`
+    : result.answer;
+
+  controller.enqueue(sseEvent({ type: 'chunk', text }));
+}
+
 // Single dispatcher used both for the requested model and for any
 // fallback attempts, so both paths share identical call logic.
 async function streamModel(
@@ -287,6 +312,7 @@ async function streamModel(
   if (mapped.provider === 'groq') return streamGroq(messages, mapped.model, systemPrompt, controller);
   if (mapped.provider === 'gemini') return streamGemini(messages, mapped.model, systemPrompt, controller);
   if (mapped.provider === 'custom-qa') return streamCustomQA(messages, controller);
+  if (mapped.provider === 'js-embedding') return streamJsEmbeddingQA(messages, controller);
   throw new Error(`Streaming isn't implemented for provider "${mapped.provider}" yet (no API key configured anyway).`);
 }
 
@@ -303,12 +329,28 @@ function isRateLimitError(err: unknown): boolean {
 // reliable than the real providers. Any failure from it is worth falling
 // back on, not just rate-limit-shaped ones.
 function shouldFallback(modelId: string, err: unknown): boolean {
-  return modelId === 'simple-qa' || isRateLimitError(err);
+  return modelId === 'simple-qa' || modelId === 'simple-qa-js' || isRateLimitError(err);
 }
 
 // Free-tier models only, in preference order. 'search-agent' — and the
 // commented-out paid OpenAI/Anthropic models — are deliberately excluded.
 const FALLBACK_CHAIN = ['llama-3.3-70b', 'gpt-oss-120b-groq', 'gemini-pro'];
+
+// simple-qa (Python/TF-IDF) and simple-qa-js (Transformers.js) are two
+// independent implementations of the SAME homemade Q&A bot. If one is
+// down, try the other FIRST — they act as one combined "buatan sendiri"
+// tier — before falling through to the big providers.
+const CUSTOM_QA_SIBLING: Record<string, string> = {
+  'simple-qa': 'simple-qa-js',
+  'simple-qa-js': 'simple-qa',
+};
+
+function getFallbackCandidates(modelId: string): string[] {
+  const base = FALLBACK_CHAIN.filter((id) => id !== modelId);
+  const sibling = CUSTOM_QA_SIBLING[modelId];
+  if (sibling) return [sibling, ...base];
+  return base;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -342,6 +384,7 @@ export async function POST(req: NextRequest) {
       async start(controller) {
         let actualModelId = modelId;
         let succeeded = false;
+        let fallbackReason: string | undefined;
 
         try {
           const primarySystemPrompt = buildSystemPrompt(
@@ -365,12 +408,18 @@ export async function POST(req: NextRequest) {
             return;
           }
 
-          // Rate-limited — automatically try the other free models.
-          // Never retries the one that just failed, never falls back
-          // into search-agent. Each candidate's prompt is built fresh
-          // (not once upfront) since Gemini is itself in the fallback
-          // chain and needs different flags than a non-search model.
-          const candidates = FALLBACK_CHAIN.filter((id) => id !== modelId);
+          // Remember WHY the primary model failed — not every fallback is
+          // an actual rate limit (e.g. simple-qa falls back on any error,
+          // including "not configured" or "unreachable"), so the client
+          // needs the real reason to avoid mislabeling it.
+          fallbackReason = err instanceof Error ? err.message : 'Unknown error';
+
+          // Automatically try the other free models. Never retries the
+          // one that just failed, never falls back into search-agent.
+          // Each candidate's prompt is built fresh (not once upfront)
+          // since Gemini is itself in the fallback chain and needs
+          // different flags than a non-search model.
+          const candidates = getFallbackCandidates(modelId);
           let lastErr: unknown = err;
 
           for (const candidateId of candidates) {
@@ -407,9 +456,11 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Client compares this to what it originally requested to decide
-        // whether to prepend the "model was rate-limited" note.
-        controller.enqueue(sseEvent({ type: 'done', actualModelId }));
+        // Client compares actualModelId to what it originally requested
+        // to decide whether to show a fallback note, and uses
+        // fallbackReason to phrase it accurately (rate limit vs. simply
+        // unreachable/misconfigured).
+        controller.enqueue(sseEvent({ type: 'done', actualModelId, fallbackReason }));
         controller.close();
       },
     });
