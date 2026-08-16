@@ -274,25 +274,45 @@ async function streamCustomQA(
 }
 
 // Same idea as streamCustomQA, but for the Transformers.js version — no
-// HTTP call needed since it's the SAME Next.js app/process, just a
-// direct function call. Dynamic import so the (fairly large) transformers
-// library only ever loads into memory if this specific model is used.
+// Calls the SEPARATE Simple Q&A JS service (its own Render deployment,
+// NOT part of CodeMind's own process). This is deliberate — running the
+// embedding model inside CodeMind's own process previously caused an
+// out-of-memory crash that took down all of CodeMind, not just this
+// feature (Render free tier's 512MB limit). Running it as an isolated
+// service means a crash there only breaks this one model, never CodeMind
+// itself.
 async function streamJsEmbeddingQA(
   messages: ChatMessage[],
   controller: ReadableStreamDefaultController
 ): Promise<void> {
-  const { matchQuestion } = await import('@/lib/simple-qa-js');
+  const apiUrl = process.env.SIMPLE_QA_JS_API_URL;
+  if (!apiUrl) {
+    throw new Error('SIMPLE_QA_JS_API_URL is missing. Add it to your .env file.');
+  }
 
   const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
   if (!lastUserMessage) {
     throw new Error('No user message found to ask.');
   }
 
-  const result = await matchQuestion(lastUserMessage.content);
-  const confidencePercent = Math.round(result.confidence * 100);
-  const text = result.matchedQuestion
-    ? `${result.answer}\n\n_(cocok ${confidencePercent}% dengan: "${result.matchedQuestion}" — embedding: ${Math.round(result.embeddingScore * 100)}%, TF-IDF: ${Math.round(result.tfidfScore * 100)}%)_`
-    : result.answer;
+  const res = await fetch(`${apiUrl.replace(/\/$/, '')}/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: lastUserMessage.content }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Simple Q&A JS API error (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  const confidencePercent = Math.round((data.confidence ?? 0) * 100);
+  const text = data.matched_question
+    ? `${data.answer}\n\n_(cocok ${confidencePercent}% dengan: "${data.matched_question}" — embedding: ${Math.round(
+        (data.embedding_score ?? 0) * 100
+      )}%, TF-IDF: ${Math.round((data.tfidf_score ?? 0) * 100)}%)_`
+    : data.answer;
 
   controller.enqueue(sseEvent({ type: 'chunk', text }));
 }
