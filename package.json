@@ -24,7 +24,8 @@
       "postcss",
       "eslint",
       "prettier",
-      "@netlify/plugin-nextjs"
+      "@netlify/plugin-nextjs",
+      "@huggingface/transformers": "^4.x.x"
     ],
     "scripts": [
       "dev",
