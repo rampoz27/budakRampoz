@@ -17,4 +17,5 @@ export const AI_MODELS: AIModel[] = [
   { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: 'Groq', color: '#F55036', badge: 'Blazing fast' },
   { id: 'gpt-oss-120b-groq', name: 'GPT-OSS 120B', provider: 'Groq', color: '#F55036', badge: 'Reasoning' },
   { id: 'search-agent', name: 'AI Search Agent', provider: 'CodeMind', color: '#22C55E', badge: '2-step' },
+  { id: 'simple-qa', name: 'Simple Q&A (Buatan Sendiri)', provider: 'Kamu', color: '#EAB308', badge: 'Eksperimental' },
 ];
