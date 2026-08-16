@@ -34,6 +34,7 @@ const MODEL_COLORS: Record<string, string> = {
   'llama-3.3-70b': '#F55036',
   'gpt-oss-120b-groq': '#F55036',
   'search-agent': '#22C55E',
+  'simple-qa': '#EAB308',
 };
 
 const MODEL_NAMES: Record<string, string> = {
@@ -45,6 +46,7 @@ const MODEL_NAMES: Record<string, string> = {
   'llama-3.3-70b': 'Llama 3.3 70B',
   'gpt-oss-120b-groq': 'GPT-OSS 120B',
   'search-agent': 'Search Agent',
+  'simple-qa': 'Simple Q&A',
 };
 
 const markdownComponents = {
