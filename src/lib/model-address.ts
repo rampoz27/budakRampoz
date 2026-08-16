@@ -21,6 +21,9 @@ const BUILTIN_ALIASES: Record<string, string> = {
   oss: 'gpt-oss-120b-groq',
   'search agent': 'search-agent',
   searchagent: 'search-agent',
+  'model sendiri': 'simple-qa',
+  'simple qa': 'simple-qa',
+  'qa bot': 'simple-qa',
 };
 
 function escapeRegex(text: string): string {
