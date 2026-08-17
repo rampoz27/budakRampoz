@@ -5,35 +5,64 @@ import { NextRequest, NextResponse } from 'next/server';
 // AI puluhan kali per sesi, jangan sampai diam-diam ngabisin jatah 50 RPD.
 const ROTATION = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b'] as const;
 
+// Groq ngebatesin 30 request/menit PER MODEL — kalau target_count
+// dinaikin (banyak pertanyaan sekaligus), gampang kena limit ini kalau
+// manggil beruntun tanpa jeda. Delay kecil di sini + retry otomatis di
+// bawah, dua-duanya jaga biar proses belajar nggak gagal total pas kena
+// limit sementara.
+const DELAY_BETWEEN_CALLS_MS = 1200;
+const MAX_RETRIES = 3;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function callGroq(model: string, systemPrompt: string, userPrompt: string): Promise<string> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey || apiKey.startsWith('your-')) {
     throw new Error('GROQ_API_KEY is missing.');
   }
 
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.6,
-    }),
-  });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.6,
+      }),
+    });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Groq error (${res.status}): ${errText}`);
+    if (res.status === 429) {
+      if (attempt === MAX_RETRIES) {
+        const errText = await res.text();
+        throw new Error(`Groq error (429) setelah ${MAX_RETRIES}x coba ulang: ${errText}`);
+      }
+      // Exponential backoff: 2s, 4s, 8s — dikasih jeda makin lama tiap
+      // gagal, biar limit-nya sempat "reset" sebelum coba lagi.
+      const waitMs = 2000 * Math.pow(2, attempt);
+      console.warn(`[callGroq] Kena rate limit, nunggu ${waitMs}ms sebelum coba ulang (percobaan ${attempt + 1}/${MAX_RETRIES})...`);
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Groq error (${res.status}): ${errText}`);
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content ?? '';
   }
 
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content ?? '';
+  throw new Error('Groq: gagal setelah semua percobaan ulang.');
 }
 
 async function generateQuestions(model: string, subtopicName: string, count: number): Promise<string[]> {
@@ -132,6 +161,9 @@ export async function POST(req: NextRequest) {
           sourceModel: answerModel,
           skippedAsDuplicate: false, // dedup check dilakuin di client sebelum save, pakai findSimilarKnowledge
         });
+
+        // Jeda kecil biar nggak numpuk request ke Groq terlalu cepat.
+        await sleep(DELAY_BETWEEN_CALLS_MS);
       }
     }
 
