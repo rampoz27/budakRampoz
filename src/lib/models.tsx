@@ -7,14 +7,13 @@ export interface AIModel {
 }
 
 export const AI_MODELS: AIModel[] = [
-  // Commented out until OPENAI_API_KEY is set in .env — uncomment to re-enable.
   { id: 'gpt-4o', name: 'GPT-5.4 Mini', provider: 'OpenAI', color: '#10A37F', badge: 'Fast' },
   { id: 'gpt-4-turbo', name: 'GPT-5.4', provider: 'OpenAI', color: '#10A37F', badge: 'Smart' },
   // Commented out until ANTHROPIC_API_KEY is set in .env — uncomment to re-enable.
   // { id: 'claude-3-5-sonnet', name: 'Claude Sonnet 5', provider: 'Anthropic', color: '#D97706', badge: 'Best' },
   // { id: 'claude-3-haiku', name: 'Claude Haiku 4.5', provider: 'Anthropic', color: '#D97706', badge: null },
   { id: 'gemini-pro', name: 'Gemini 3.6 Flash', provider: 'Google', color: '#4285F4', badge: 'Long ctx' },
-  { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: 'Groq', color: '#F55036', badge: 'Blazing fast' },
+  { id: 'qwen-27b', name: 'Qwen3.6 27B', provider: 'Groq', color: '#F55036', badge: 'Blazing fast' },
   { id: 'gpt-oss-120b-groq', name: 'GPT-OSS 120B', provider: 'Groq', color: '#F55036', badge: 'Reasoning' },
   { id: 'search-agent', name: 'AI Search Agent', provider: 'CodeMind', color: '#22C55E', badge: '2-step' },
   { id: 'simple-qa', name: 'Simple Q&A (Buatan Sendiri)', provider: 'Kamu', color: '#EAB308', badge: 'Eksperimental' },
