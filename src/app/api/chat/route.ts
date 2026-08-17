@@ -90,6 +90,54 @@ function sseEvent(obj: unknown): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(obj)}\n\n`);
 }
 
+// Beberapa model (kayak Qwen, dan kadang GPT-OSS) nulis "proses mikirnya"
+// sendiri di dalam tag <think>...</think> sebelum jawaban aslinya — itu
+// nggak boleh sampai kelihatan user, cuma buat "PR" internal model doang.
+// Class ini nyaring itu dari aliran chunk streaming, dan aman walau tag
+// pembuka/penutupnya kepotong di tengah antar 2 chunk yang beda.
+class ThinkTagStripper {
+  private pending = '';
+  private inThink = false;
+
+  feed(text: string): string {
+    this.pending += text;
+    let output = '';
+
+    while (true) {
+      if (!this.inThink) {
+        const openIdx = this.pending.indexOf('<think>');
+        if (openIdx === -1) {
+          // Belum ketemu tag pembuka. Tahan beberapa karakter terakhir,
+          // siapa tau itu awal dari "<think>" yang kepotong chunk.
+          const holdBack = Math.min(this.pending.length, '<think>'.length - 1);
+          const safeLen = this.pending.length - holdBack;
+          if (safeLen > 0) {
+            output += this.pending.slice(0, safeLen);
+            this.pending = this.pending.slice(safeLen);
+          }
+          break;
+        }
+        output += this.pending.slice(0, openIdx);
+        this.pending = this.pending.slice(openIdx + '<think>'.length);
+        this.inThink = true;
+      } else {
+        const closeIdx = this.pending.indexOf('</think>');
+        if (closeIdx === -1) {
+          // Masih di dalam blok mikir — buang semuanya, tapi sisain
+          // sedikit ekor buat jaga-jaga tag penutupnya kepotong chunk.
+          const holdBack = Math.min(this.pending.length, '</think>'.length - 1);
+          this.pending = this.pending.slice(this.pending.length - holdBack);
+          break;
+        }
+        this.pending = this.pending.slice(closeIdx + '</think>'.length);
+        this.inThink = false;
+      }
+    }
+
+    return output;
+  }
+}
+
 // ── Streaming callers — each pushes {type:"chunk", text} events directly
 //    onto the outer controller as content arrives, and throws BEFORE any
 //    chunk is enqueued if the initial connection fails (429/413/etc) —
@@ -128,6 +176,7 @@ async function streamGroq(
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  const thinkStripper = new ThinkTagStripper();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -144,7 +193,10 @@ async function streamGroq(
       try {
         const json = JSON.parse(dataStr);
         const delta = json.choices?.[0]?.delta?.content;
-        if (delta) controller.enqueue(sseEvent({ type: 'chunk', text: delta }));
+        if (delta) {
+          const visible = thinkStripper.feed(delta);
+          if (visible) controller.enqueue(sseEvent({ type: 'chunk', text: visible }));
+        }
       } catch {
         // ignore a malformed/partial SSE line
       }
