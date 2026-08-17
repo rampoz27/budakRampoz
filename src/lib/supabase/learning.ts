@@ -67,7 +67,7 @@ export async function createTopic(topicName: string): Promise<LearningTopicRow> 
 export async function createSubtopics(
   topicId: string,
   subtopicNames: string[],
-  targetCount = 5
+  targetCount = 15
 ): Promise<LearningSubtopicRow[]> {
   const {
     data: { user },
