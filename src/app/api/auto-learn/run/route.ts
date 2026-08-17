@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 // Model gratis-generous yang dirotasi biar nggak numpuk ke 1 provider
 // doang. GPT-5.4/mini SENGAJA nggak dimasukin — proses ini bisa manggil
 // AI puluhan kali per sesi, jangan sampai diam-diam ngabisin jatah 50 RPD.
-const ROTATION = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b'] as const;
+const ROTATION = ['qwen/qwen3.6-27b', 'openai/gpt-oss-120b'] as const;
 
 // Groq ngebatesin 30 request/menit PER MODEL — kalau target_count
 // dinaikin (banyak pertanyaan sekaligus), gampang kena limit ini kalau
