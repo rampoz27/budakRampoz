@@ -30,6 +30,7 @@ const navGroups = [
       { href: '/shifts', label: 'Shift', icon: 'ClipboardDocumentCheckIcon', badge: null },
       { href: '/alarms', label: 'Alarm', icon: 'ClockIcon', badge: null },
       { href: '/accounts', label: 'Rekening', icon: 'CreditCardIcon', badge: null },
+      { href: '/learning', label: 'Pembelajaran AI', icon: 'AcademicCapIcon', badge: null },
     ],
   },
   {
