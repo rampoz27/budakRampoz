@@ -152,6 +152,64 @@ async function streamGroq(
   }
 }
 
+// Same SSE chunk format as Groq — OpenAI's chat completions API is what
+// Groq's endpoint deliberately mimics, so the parsing logic is identical.
+async function streamOpenAI(
+  messages: ChatMessage[],
+  model: string,
+  systemPrompt: string,
+  controller: ReadableStreamDefaultController
+): Promise<void> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || apiKey.startsWith('your-')) {
+    throw new Error('OPENAI_API_KEY is missing. Add a real key to your .env file.');
+  }
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
+      stream: true,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI error (${res.status}): ${errText}`);
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const dataStr = trimmed.slice(5).trim();
+      if (!dataStr || dataStr === '[DONE]') continue;
+      try {
+        const json = JSON.parse(dataStr);
+        const delta = json.choices?.[0]?.delta?.content;
+        if (delta) controller.enqueue(sseEvent({ type: 'chunk', text: delta }));
+      } catch {
+        // ignore a malformed/partial SSE line
+      }
+    }
+  }
+}
+
 async function streamGemini(
   messages: ChatMessage[],
   model: string,
@@ -330,6 +388,7 @@ async function streamModel(
     throw new Error(`Model "${modelId}" is not wired to a provider yet.`);
   }
   if (mapped.provider === 'groq') return streamGroq(messages, mapped.model, systemPrompt, controller);
+  if (mapped.provider === 'openai') return streamOpenAI(messages, mapped.model, systemPrompt, controller);
   if (mapped.provider === 'gemini') return streamGemini(messages, mapped.model, systemPrompt, controller);
   if (mapped.provider === 'custom-qa') return streamCustomQA(messages, controller);
   if (mapped.provider === 'js-embedding') return streamJsEmbeddingQA(messages, controller);
