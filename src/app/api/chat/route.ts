@@ -136,6 +136,22 @@ class ThinkTagStripper {
 
     return output;
   }
+
+  // WAJIB dipanggil pas stream udah beneran selesai — feed() sengaja
+  // nahan beberapa karakter terakhir tiap kali (jaga-jaga tag kepotong
+  // antar chunk), jadi tanpa ini, ekor SETIAP respons bakal ke-potong
+  // diam-diam, bukan cuma yang beneran ada blok <think>-nya.
+  flush(): string {
+    if (this.inThink) {
+      // Stream berakhir di tengah blok mikir (nggak wajar/rusak) — nggak
+      // ada yang aman buat dikeluarin dari situ.
+      this.pending = '';
+      return '';
+    }
+    const rest = this.pending;
+    this.pending = '';
+    return rest;
+  }
 }
 
 // ── Streaming callers — each pushes {type:"chunk", text} events directly
@@ -202,6 +218,9 @@ async function streamGroq(
       }
     }
   }
+
+  const remaining = thinkStripper.flush();
+  if (remaining) controller.enqueue(sseEvent({ type: 'chunk', text: remaining }));
 }
 
 // Same SSE chunk format as Groq — OpenAI's chat completions API is what
