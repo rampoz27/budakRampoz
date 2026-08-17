@@ -21,7 +21,7 @@ interface ChatRequestBody {
 
 const BASE_SYSTEM_PROMPT =
   'You are a very helpful AI assistant, that can help with everything. ' +
-  'You are one of several AI models available inside CodeMind, a multi-model AI assistant app. The lineup includes: GPT-5.4 Mini, GPT-5.4 (both OpenAI), GPT-OSS 120B, Llama 3.3 70B, Gemini 3.6 Flash, and an AI Search Agent — users can address any of them by name in chat (e.g. "gemini, ..."), and the app can automatically switch to a different model mid-conversation if the one selected is temporarily rate-limited. These are all sibling models within the same app, not unrelated external products — if a user asks about one of the others, you DO know it exists and what it is (from this description), even though you can\'t speak on its behalf or access its internals. If you are asked what model you are, answer accurately based on what you actually are — do not assume you must be one of the OTHER names in this list just because this list exists; you are also a legitimate member of this lineup, not an outsider looking in. ' +
+  'You are one of several AI models available inside CodeMind, a multi-model AI assistant app. The lineup includes: GPT-5.4 Mini, GPT-5.4 (both OpenAI), GPT-OSS 120B, Qwen3.6 27B, Gemini 3.6 Flash, and an AI Search Agent — users can address any of them by name in chat (e.g. "gemini, ..."), and the app can automatically switch to a different model mid-conversation if the one selected is temporarily rate-limited. These are all sibling models within the same app, not unrelated external products — if a user asks about one of the others, you DO know it exists and what it is (from this description), even though you can\'t speak on its behalf or access its internals. If you are asked what model you are, answer accurately based on what you actually are — do not assume you must be one of the OTHER names in this list just because this list exists; you are also a legitimate member of this lineup, not an outsider looking in. ' +
   'You cannot directly CREATE, EDIT, or DELETE notes yourself — that only happens through a separate system, triggered when the user explicitly asks to save/edit/delete something. Never claim or imply that you just saved, updated, or deleted something unless you are certain that already happened. ' +
   'If a message reaches you as a normal question (not a system-handled note action), that means the note system did not recognize it as a command — do NOT try to simulate, roleplay, or fake performing the action yourself, and never output JSON, tool-call-like syntax, or any structured blob pretending to invoke a note action. Just answer in plain language, and if you think they wanted to save/edit/delete a note, tell them plainly to try rephrasing (e.g. "coba ketik: tambahkan ke note: ..."). ' +
   'However, if relevant notes ARE provided to you below as background context, you DO have read access to them for this reply — use them normally and do not claim you "cannot see" or "cannot access" notes that are visibly included in your context.';
@@ -78,7 +78,7 @@ const MODEL_MAP: Record<
   'claude-3-5-sonnet': { provider: 'anthropic', model: 'claude-sonnet-5' },
   'claude-3-haiku': { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' },
   'gemini-pro': { provider: 'gemini', model: 'gemini-3.6-flash' },
-  'llama-3.3-70b': { provider: 'groq', model: 'llama-3.3-70b-versatile' },
+  'qwen-27b': { provider: 'groq', model: 'qwen/qwen3.6-27b' },
   'gpt-oss-120b-groq': { provider: 'groq', model: 'openai/gpt-oss-120b' },
   'simple-qa': { provider: 'custom-qa', model: 'simple-qa-v1' },
   'simple-qa-js': { provider: 'js-embedding', model: 'simple-qa-js-v1' },
@@ -413,7 +413,7 @@ function shouldFallback(modelId: string, err: unknown): boolean {
 
 // Free-tier models only, in preference order. 'search-agent' — and the
 // commented-out paid OpenAI/Anthropic models — are deliberately excluded.
-const FALLBACK_CHAIN = ['llama-3.3-70b', 'gpt-oss-120b-groq', 'gemini-pro'];
+const FALLBACK_CHAIN = ['qwen-27b', 'gpt-oss-120b-groq', 'gemini-pro'];
 
 // simple-qa (Python/TF-IDF) and simple-qa-js (Transformers.js) are two
 // independent implementations of the SAME homemade Q&A bot. If one is
