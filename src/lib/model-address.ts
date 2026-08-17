@@ -15,7 +15,7 @@ import type { AIModel } from './models';
 // more here as new models are added — keys must be lowercase.
 const BUILTIN_ALIASES: Record<string, string> = {
   gemini: 'gemini-pro',
-  llama: 'llama-3.3-70b',
+  qwen: 'qwen-27b',
   'gpt oss': 'gpt-oss-120b-groq',
   'gpt-oss': 'gpt-oss-120b-groq',
   oss: 'gpt-oss-120b-groq',
