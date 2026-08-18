@@ -21,7 +21,7 @@ interface ChatRequestBody {
 
 const BASE_SYSTEM_PROMPT =
   'You are a very helpful AI assistant, that can help with everything. ' +
-  'You are one of several AI models available inside CodeMind, a multi-model AI assistant app. The lineup includes: GPT-5.4 Mini, GPT-5.4 (both OpenAI), GPT-OSS 120B, Qwen3.6 27B, Gemini 3.6 Flash, and an AI Search Agent — users can address any of them by name in chat (e.g. "gemini, ..."), and the app can automatically switch to a different model mid-conversation if the one selected is temporarily rate-limited. These are all sibling models within the same app, not unrelated external products — if a user asks about one of the others, you DO know it exists and what it is (from this description), even though you can\'t speak on its behalf or access its internals. If you are asked what model you are, answer accurately based on what you actually are — do not assume you must be one of the OTHER names in this list just because this list exists; you are also a legitimate member of this lineup, not an outsider looking in. ' +
+  'You are one of several AI models available inside CodeMind, a multi-model AI assistant app. The lineup includes: GPT-5.4 Mini, GPT-5.4 (both OpenAI), GPT-OSS 120B, Qwen3.6 27B, Nemotron 3 Ultra (NVIDIA, via OpenRouter), Gemini 3.6 Flash, and an AI Search Agent — users can address any of them by name in chat (e.g. "gemini, ..."), and the app can automatically switch to a different model mid-conversation if the one selected is temporarily rate-limited. These are all sibling models within the same app, not unrelated external products — if a user asks about one of the others, you DO know it exists and what it is (from this description), even though you can\'t speak on its behalf or access its internals. If you are asked what model you are, answer accurately based on what you actually are — do not assume you must be one of the OTHER names in this list just because this list exists; you are also a legitimate member of this lineup, not an outsider looking in. ' +
   'You cannot directly CREATE, EDIT, or DELETE notes yourself — that only happens through a separate system, triggered when the user explicitly asks to save/edit/delete something. Never claim or imply that you just saved, updated, or deleted something unless you are certain that already happened. ' +
   'If a message reaches you as a normal question (not a system-handled note action), that means the note system did not recognize it as a command — do NOT try to simulate, roleplay, or fake performing the action yourself, and never output JSON, tool-call-like syntax, or any structured blob pretending to invoke a note action. Just answer in plain language, and if you think they wanted to save/edit/delete a note, tell them plainly to try rephrasing (e.g. "coba ketik: tambahkan ke note: ..."). ' +
   'However, if relevant notes ARE provided to you below as background context, you DO have read access to them for this reply — use them normally and do not claim you "cannot see" or "cannot access" notes that are visibly included in your context.';
@@ -71,7 +71,7 @@ function buildSystemPrompt(
 
 const MODEL_MAP: Record<
   string,
-  { provider: 'openai' | 'anthropic' | 'groq' | 'gemini' | 'custom-qa' | 'js-embedding'; model: string }
+  { provider: 'openai' | 'anthropic' | 'groq' | 'openrouter' | 'gemini' | 'custom-qa' | 'js-embedding'; model: string }
 > = {
   'gpt-4o': { provider: 'openai', model: 'gpt-5.4-mini' },
   'gpt-4-turbo': { provider: 'openai', model: 'gpt-5.4' },
@@ -80,6 +80,7 @@ const MODEL_MAP: Record<
   'gemini-pro': { provider: 'gemini', model: 'gemini-3.6-flash' },
   'qwen-27b': { provider: 'groq', model: 'qwen/qwen3.6-27b' },
   'gpt-oss-120b-groq': { provider: 'groq', model: 'openai/gpt-oss-120b' },
+  'nemotron-3-ultra': { provider: 'openrouter', model: 'nvidia/nemotron-3-ultra-550b-a55b:free' },
   'simple-qa': { provider: 'custom-qa', model: 'simple-qa-v1' },
   'simple-qa-js': { provider: 'js-embedding', model: 'simple-qa-js-v1' },
 };
@@ -221,6 +222,73 @@ async function streamGroq(
 
   const remaining = thinkStripper.flush();
   if (remaining) controller.enqueue(sseEvent({ type: 'chunk', text: remaining }));
+}
+
+// OpenRouter's API is also OpenAI-compatible (base URL + Bearer token +
+// same SSE chunk shape) — model IDs use "provider/model:free" format, e.g.
+// "nvidia/nemotron-3-ultra-550b-a55b:free". Free-tier models can emit
+// <think> reasoning blocks too, so we run the same stripper.
+async function streamOpenRouter(
+  messages: ChatMessage[],
+  model: string,
+  systemPrompt: string,
+  controller: ReadableStreamDefaultController
+): Promise<void> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey || apiKey.startsWith('your-')) {
+    throw new Error('OPENROUTER_API_KEY is missing. Add a real key to your .env file.');
+  }
+
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
+      stream: true,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenRouter error (${res.status}): ${errText}`);
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const thinkStripper = new ThinkTagStripper();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const dataStr = trimmed.slice(5).trim();
+      if (!dataStr || dataStr === '[DONE]') continue;
+      try {
+        const json = JSON.parse(dataStr);
+        const delta = json.choices?.[0]?.delta?.content;
+        if (delta) {
+          const visible = thinkStripper.feed(delta);
+          if (visible) controller.enqueue(sseEvent({ type: 'chunk', text: visible }));
+        }
+      } catch {
+        // ignore a malformed/partial SSE line
+      }
+    }
+  }
+
+  const remainingOr = thinkStripper.flush();
+  if (remainingOr) controller.enqueue(sseEvent({ type: 'chunk', text: remainingOr }));
 }
 
 // Same SSE chunk format as Groq — OpenAI's chat completions API is what
@@ -460,6 +528,7 @@ async function streamModel(
   }
   if (mapped.provider === 'groq') return streamGroq(messages, mapped.model, systemPrompt, controller);
   if (mapped.provider === 'openai') return streamOpenAI(messages, mapped.model, systemPrompt, controller);
+  if (mapped.provider === 'openrouter') return streamOpenRouter(messages, mapped.model, systemPrompt, controller);
   if (mapped.provider === 'gemini') return streamGemini(messages, mapped.model, systemPrompt, controller);
   if (mapped.provider === 'custom-qa') return streamCustomQA(messages, controller);
   if (mapped.provider === 'js-embedding') return streamJsEmbeddingQA(messages, controller);
