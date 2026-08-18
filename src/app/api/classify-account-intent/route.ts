@@ -30,7 +30,7 @@ Rules:
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'qwen/qwen3.6-27b',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message },
@@ -48,13 +48,20 @@ Rules:
     const data = await res.json();
     const raw = data.choices?.[0]?.message?.content ?? '{}';
 
+    // Beberapa model (Qwen, dkk) suka nulis proses "mikir"-nya sendiri
+    // dalam tag <think>...</think> SEBELUM JSON aslinya, walau udah
+    // diminta JSON mode — itu bikin JSON.parse gagal total kalau nggak
+    // dibuang dulu, dan gagalnya SELALU jatuh diam-diam ke default 'none'.
+    const cleanedRaw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() || raw;
+
     let parsed: {
       action?: string;
       accounts?: Array<{ bankName?: string; holderName?: string; accountNumber?: string }>;
     };
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(cleanedRaw);
     } catch {
+      console.error('[/api/classify-account-intent] Failed to parse model output as JSON:', raw);
       parsed = {};
     }
 
