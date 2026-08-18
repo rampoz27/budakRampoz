@@ -71,10 +71,17 @@ export async function POST(req: NextRequest) {
     const data = await res.json();
     const raw = data.choices?.[0]?.message?.content ?? '{}';
 
+    // Beberapa model (Qwen, dkk) suka nulis proses "mikir"-nya sendiri
+    // dalam tag <think>...</think> SEBELUM JSON aslinya, walau udah
+    // diminta JSON mode — itu bikin JSON.parse gagal total kalau nggak
+    // dibuang dulu, dan gagalnya SELALU jatuh diam-diam ke default 'none'.
+    const cleanedRaw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() || raw;
+
     let parsed: NoteIntentResult;
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(cleanedRaw);
     } catch {
+      console.error('[/api/classify-note-intent] Failed to parse model output as JSON:', raw);
       parsed = { action: 'none', target: '', content: '' };
     }
 
