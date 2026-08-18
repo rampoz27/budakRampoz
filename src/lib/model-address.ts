@@ -16,6 +16,7 @@ import type { AIModel } from './models';
 const BUILTIN_ALIASES: Record<string, string> = {
   gemini: 'gemini-pro',
   qwen: 'qwen-27b',
+  nemotron: 'nemotron-3-ultra',
   'gpt oss': 'gpt-oss-120b-groq',
   'gpt-oss': 'gpt-oss-120b-groq',
   oss: 'gpt-oss-120b-groq',
