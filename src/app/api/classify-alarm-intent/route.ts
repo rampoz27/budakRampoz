@@ -41,6 +41,9 @@ Current date and time: ${currentDateTime}`;
           { role: 'user', content: message },
         ],
         temperature: 0,
+        reasoning_effort: 'none', // Qwen3 khusus: matiin reasoning sama sekali, biar nggak
+        // nulis blok <think> yang bentrok sama validasi JSON Groq sendiri
+        // (classifier ini butuh JSON bersih, bukan proses mikir yang keliatan)
         response_format: { type: 'json_object' },
       }),
     });
