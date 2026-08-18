@@ -35,7 +35,7 @@ Current date and time: ${currentDateTime}`;
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'qwen/qwen3.6-27b',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message },
@@ -53,10 +53,17 @@ Current date and time: ${currentDateTime}`;
     const data = await res.json();
     const raw = data.choices?.[0]?.message?.content ?? '{}';
 
+    // Beberapa model (Qwen, dkk) suka nulis proses "mikir"-nya sendiri
+    // dalam tag <think>...</think> SEBELUM JSON aslinya, walau udah
+    // diminta JSON mode — itu bikin JSON.parse gagal total kalau nggak
+    // dibuang dulu, dan gagalnya SELALU jatuh diam-diam ke default 'none'.
+    const cleanedRaw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() || raw;
+
     let parsed: { action?: string; label?: string; alarmDateTime?: string };
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(cleanedRaw);
     } catch {
+      console.error('[/api/classify-alarm-intent] Failed to parse model output as JSON:', raw);
       parsed = {};
     }
 
