@@ -50,9 +50,16 @@ import {
   createConversation,
   saveMessage,
   deleteConversation,
+  updateConversationSummary,
   type ConversationRow,
 } from '@/lib/supabase/conversations';
 import type { Message, AIModel, Conversation } from './chatTypes';
+
+// How many of the MOST RECENT messages get sent to the model raw, verbatim.
+// Everything older than this gets folded into the cached summary instead —
+// see the block in handleSendMessage below. Conversations shorter than this
+// are unaffected entirely (no summarization overhead at all).
+const SLIDING_WINDOW_SIZE = 20;
 
 // Executes a classified note command and returns the confirmation text to
 // show in chat. Kept outside the component since it doesn't touch React
@@ -70,7 +77,6 @@ async function handleNoteCommand(
     await createNote({ title, content: noteContent.trim(), tags: ['from-chat'] });
     return `✅ Saved to your notes: **"${title}"**`;
   }
-
   if (intent.action === 'delete') {
     if (!intent.target.trim()) {
       return 'Which note should I delete? Try something like "hapus note supabase".';
@@ -89,7 +95,6 @@ async function handleNoteCommand(
     await deleteNote(note.id);
     return `🗑️ Deleted note: **"${note.title}"**`;
   }
-
   if (intent.action === 'edit') {
     if (!intent.target.trim()) {
       return 'Which note should I edit? Try something like "edit note supabase: new content here".';
@@ -109,7 +114,6 @@ async function handleNoteCommand(
     await updateNote(note.id, { title: note.title, content: intent.content.trim(), tags: note.tags });
     return `✏️ Updated note: **"${note.title}"**`;
   }
-
   return "I recognized that as a note command but couldn't figure out what to do with it.";
 }
 
@@ -169,18 +173,15 @@ export default function ChatWorkspace() {
   const handleSelectConversation = async (id: string) => {
     const conv = conversations.find((c) => c.id === id);
     if (!conv) return;
-
     setActiveConversation(conv);
     setIsLoadingMessages(true);
     setTypingMessageId(null);
     try {
       const rows = await fetchMessages(id);
-
       // Old assistant messages may still contain {{ACC-xxxxxxxx}} tokens
       // — swap them back to real numbers for display, same as freshly
       // received responses.
       const accountsForDisplay = hasAccounts ? await fetchActiveBankAccounts().catch(() => []) : [];
-
       setMessages(
         rows.map((r) => {
           if (r.role !== 'assistant') return { id: r.id, role: r.role, content: r.content, timestamp: r.created_at, model: r.model_id || undefined };
@@ -211,7 +212,6 @@ export default function ChatWorkspace() {
     try {
       await deleteConversation(id);
       setConversations((prev) => prev.filter((c) => c.id !== id));
-
       // If the deleted conversation was open, fall back to a blank chat.
       if (activeConversation?.id === id) {
         setActiveConversation(null);
@@ -267,13 +267,10 @@ export default function ChatWorkspace() {
     if (mightBeNoteCommand(content)) {
       const lastAssistantMsg = [...messages].reverse().find((m) => m.role === 'assistant');
       const intent = await classifyNoteIntent(content, lastAssistantMsg?.content);
-
       if (intent.action !== 'none') {
         try {
           await saveMessage(conv.id, 'user', content, effectiveModel.id);
-
           const confirmationText = await handleNoteCommand(intent, lastAssistantMsg?.content);
-
           // Fixes a stale-state bug: hasNotes is only checked once on
           // mount, so if the user had zero notes when the page loaded and
           // just created their first one via this chat command, hasNotes
@@ -282,7 +279,6 @@ export default function ChatWorkspace() {
           if (intent.action === 'add' && confirmationText.startsWith('✅')) {
             setHasNotes(true);
           }
-
           const confirmationMsg: Message = {
             id: `msg-${Date.now() + 1}`,
             role: 'assistant',
@@ -290,7 +286,6 @@ export default function ChatWorkspace() {
             timestamp: new Date().toISOString(),
             model: effectiveModel.id,
           };
-
           setMessages((prev) => [...prev, confirmationMsg]);
           await saveMessage(conv.id, 'assistant', confirmationText, effectiveModel.id);
           await loadConversations();
@@ -322,19 +317,15 @@ export default function ChatWorkspace() {
           body: JSON.stringify({ message: content, currentDateTime: new Date().toString() }),
         });
         const classification = await classifyRes.json();
-
         if (classification.action === 'set_alarm' && classification.alarmDateTime) {
           const alarmDate = new Date(classification.alarmDateTime);
-
           if (!Number.isNaN(alarmDate.getTime()) && alarmDate.getTime() > Date.now()) {
             await saveMessage(conv.id, 'user', content, effectiveModel.id);
-
             const label = classification.label || content;
             await createAlarm({
               label,
               alarm_time: alarmDate.toISOString(),
             });
-
             const confirmationText = `⏰ Alarm diset: **${label}**\npada ${alarmDate.toLocaleString('en-US', {
               weekday: 'short',
               month: 'short',
@@ -343,7 +334,6 @@ export default function ChatWorkspace() {
               minute: '2-digit',
               hour12: false,
             })}.`;
-
             const confirmationMsg: Message = {
               id: `msg-${Date.now() + 1}`,
               role: 'assistant',
@@ -382,7 +372,6 @@ export default function ChatWorkspace() {
             prev.map((m) => (m.id === userMsg.id ? { ...m, content: redactedUserText } : m))
           );
           await saveMessage(conv.id, 'user', redactedUserText, effectiveModel.id);
-
           const allAccounts = await fetchBankAccounts();
           const results = candidates.map((num) => {
             const normalized = num.replace(/\D/g, '');
@@ -390,15 +379,12 @@ export default function ChatWorkspace() {
             const masked = `***${normalized.slice(-4)}`;
             return { masked, match };
           });
-
           const lines = results.map((r) =>
             r.match
               ? `✅ ${r.masked} — cocok: **${r.match.bank_name} — ${r.match.account_holder_name}** (${r.match.status === 'active' ? 'Aktif' : 'Di offkan'})`
               : `❌ ${r.masked} — tidak ditemukan di data kami`
           );
-
           const confirmationText = `Hasil verifikasi ${candidates.length} nomor (dicek langsung ke data asli, bukan lewat AI):\n\n${lines.join('\n')}`;
-
           const confirmationMsg: Message = {
             id: `msg-${Date.now() + 1}`,
             role: 'assistant',
@@ -432,7 +418,6 @@ export default function ChatWorkspace() {
         const classification = await classifyRes.json();
         const accountsToAdd: Array<{ bankName: string; holderName: string; accountNumber: string }> =
           classification.accounts ?? [];
-
         if (classification.action === 'add' && accountsToAdd.length > 0) {
           // Same reasoning as the verify command: never persist the raw
           // typed message (it contains the real account number(s)) — that
@@ -443,7 +428,6 @@ export default function ChatWorkspace() {
             prev.map((m) => (m.id === userMsg.id ? { ...m, content: redactedUserText } : m))
           );
           await saveMessage(conv.id, 'user', redactedUserText, effectiveModel.id);
-
           // Batch insert — independent rows, so run them concurrently
           // instead of one at a time.
           await Promise.all(
@@ -457,12 +441,10 @@ export default function ChatWorkspace() {
               })
             )
           );
-
           // Fixes the same stale-state issue we hit with hasNotes: update
           // immediately so this session's RAG-style lookup picks up the
           // new account(s) on the very next message, not just after reload.
           setHasAccounts(true);
-
           // Mask the number in the confirmation too — this also gets
           // saved to DB, so full digits shouldn't be in there either.
           const maskNum = (n: string) => `***${n.replace(/\D/g, '').slice(-4)}`;
@@ -472,7 +454,6 @@ export default function ChatWorkspace() {
               : `✅ ${accountsToAdd.length} rekening disimpan:\n\n${accountsToAdd
                   .map((a) => `- ${a.bankName} — ${a.holderName} — ${maskNum(a.accountNumber)}`)
                   .join('\n')}`;
-
           const confirmationMsg: Message = {
             id: `msg-${Date.now() + 1}`,
             role: 'assistant',
@@ -498,15 +479,12 @@ export default function ChatWorkspace() {
     if (mightBeStartShiftCommand(content)) {
       try {
         const existingSession = await fetchActiveShiftSession();
-
         let confirmationText: string;
-
         if (existingSession) {
           confirmationText = `Kamu udah lagi di **${existingSession.shift_name}** sekarang — akhirin dulu shift itu sebelum mulai yang baru.`;
         } else {
           const templates = await fetchShiftTemplates();
           const matches = findTemplatesForCurrentTime(templates);
-
           if (matches.length === 0) {
             const list =
               templates.length > 0
@@ -521,9 +499,7 @@ export default function ChatWorkspace() {
             confirmationText = `✅ **${session.shift_name}** dimulai (${matches[0].start_time}–${matches[0].end_time}). Ada ${session.tasks.length} jobdesk buat shift ini.`;
           }
         }
-
         await saveMessage(conv.id, 'user', content, effectiveModel.id);
-
         const confirmationMsg: Message = {
           id: `msg-${Date.now() + 1}`,
           role: 'assistant',
@@ -547,10 +523,8 @@ export default function ChatWorkspace() {
     if (mightBeJobdeskCommand(content)) {
       try {
         const activeSession = await fetchActiveShiftSession();
-
         if (activeSession) {
           const incompleteTasks = activeSession.tasks.filter((t) => !t.done);
-
           if (incompleteTasks.length > 0) {
             const classifyRes = await fetch('/api/classify-jobdesk-intent', {
               method: 'POST',
@@ -561,10 +535,8 @@ export default function ChatWorkspace() {
               }),
             });
             const classification = await classifyRes.json();
-
             if (classification.action === 'complete' && classification.taskIds?.length > 0) {
               await saveMessage(conv.id, 'user', content, effectiveModel.id);
-
               const matchedIds: string[] = classification.taskIds;
               const updatedTasks = activeSession.tasks.map((t) =>
                 matchedIds.includes(t.id)
@@ -572,13 +544,11 @@ export default function ChatWorkspace() {
                   : t
               );
               await updateSessionTasks(activeSession.id, updatedTasks);
-
               const matchedTexts = activeSession.tasks
                 .filter((t) => matchedIds.includes(t.id))
                 .map((t) => `✅ ${t.text}`)
                 .join('\n');
               const confirmationText = `Ditandai selesai:\n\n${matchedTexts}`;
-
               const confirmationMsg: Message = {
                 id: `msg-${Date.now() + 1}`,
                 role: 'assistant',
@@ -655,16 +625,71 @@ export default function ChatWorkspace() {
       const accountsContext =
         activeAccounts.length > 0 ? tokenizeAccountsForContext(activeAccounts) : '';
 
+      // ── Sliding window + cached summary ──────────────────────────────
+      // Below SLIDING_WINDOW_SIZE messages, this does nothing extra — same
+      // behavior and cost as before. Past that, only the most recent
+      // messages go to the model raw; everything older is represented by
+      // a running summary (cached in Supabase, only re-computed for the
+      // NEWLY out-of-window slice each time, not from scratch).
+      let messagesToSend = nextMessages;
+      let historyContext = '';
+
+      if (nextMessages.length > SLIDING_WINDOW_SIZE) {
+        try {
+          const oldMessages = nextMessages.slice(0, nextMessages.length - SLIDING_WINDOW_SIZE);
+          const recentMessages = nextMessages.slice(-SLIDING_WINDOW_SIZE);
+          const alreadyCovered = conv.history_summary_count ?? 0;
+          let summary = conv.history_summary ?? '';
+
+          if (oldMessages.length > alreadyCovered) {
+            const newlyAged = oldMessages
+              .slice(alreadyCovered)
+              .map((m) => ({ role: m.role, content: m.content }));
+            const summarizeRes = await fetch('/api/summarize-history', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ existingSummary: summary, newMessages: newlyAged }),
+            });
+            if (summarizeRes.ok) {
+              const summarizeData = await summarizeRes.json();
+              summary = summarizeData.summary ?? summary;
+              await updateConversationSummary(conv.id, summary, oldMessages.length);
+              // Keep local state in sync so the NEXT message in this same
+              // session reuses the fresh summary instead of redoing this.
+              conv = { ...conv, history_summary: summary, history_summary_count: oldMessages.length };
+              setActiveConversation(conv);
+            }
+            // If the request failed, `summary` just stays whatever it was
+            // before (possibly empty) — falls through to the fail-open
+            // behavior below rather than throwing.
+          }
+
+          if (summary) {
+            historyContext = `Ringkasan percakapan sebelumnya:\n${summary}`;
+          }
+          messagesToSend = recentMessages;
+        } catch (err) {
+          // Fail-safe: something about summarization broke — fall back to
+          // sending the full raw history like before rather than losing
+          // this turn. Worst case here is the old "might hit context
+          // limit on very long chats" behavior, not a broken chat.
+          console.error('History summarization failed, sending full raw history instead', err);
+          messagesToSend = nextMessages;
+          historyContext = '';
+        }
+      }
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           modelId: effectiveModel.id,
-          messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
+          messages: messagesToSend.map((m) => ({ role: m.role, content: m.content })),
           personaSettings,
           ragContext,
           shiftContext,
           accountsContext,
+          historyContext,
           // Browser's local time — naturally already in the user's own
           // timezone, no conversion needed.
           currentDateTime: new Date().toString(),
@@ -676,11 +701,9 @@ export default function ChatWorkspace() {
       if (effectiveModel.id === 'search-agent') {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'The AI request failed.');
-
         const sanitizedContent = sanitizeMalformedAccountTokens(data.content);
         const displayContent =
           activeAccounts.length > 0 ? detokenizeAccountRefs(sanitizedContent, activeAccounts) : sanitizedContent;
-
         const aiResponse: Message = {
           id: `msg-${Date.now() + 1}`,
           role: 'assistant',
@@ -688,7 +711,6 @@ export default function ChatWorkspace() {
           timestamp: new Date().toISOString(),
           model: effectiveModel.id,
         };
-
         setMessages((prev) => [...prev, aiResponse]);
         setTypingMessageId(aiResponse.id); // keep the typewriter reveal just for this one
         await saveMessage(conv.id, 'assistant', sanitizedContent, effectiveModel.id);
@@ -788,7 +810,6 @@ export default function ChatWorkspace() {
       setMessages((prev) =>
         prev.map((m) => (m.id === streamingMsgId ? { ...m, content: finalDisplayText, model: finalModelId } : m))
       );
-
       await saveMessage(conv.id, 'assistant', finalRawText, finalModelId);
       await loadConversations();
     } catch (err) {
@@ -817,7 +838,6 @@ export default function ChatWorkspace() {
         onDelete={handleDeleteConversation}
         models={AI_MODELS}
       />
-
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <ChatHeader
           title={activeConversation?.title || 'New conversation'}
@@ -825,7 +845,6 @@ export default function ChatWorkspace() {
           models={AI_MODELS}
           onModelChange={setSelectedModel}
         />
-
         {isLoadingMessages ? (
           <div className="flex-1 flex items-center justify-center">
             <Icon name="ArrowPathIcon" size={20} className="text-muted-foreground animate-spin" />
@@ -840,7 +859,6 @@ export default function ChatWorkspace() {
             onTypingComplete={() => setTypingMessageId(null)}
           />
         )}
-
         <ChatInput onSend={handleSendMessage} isStreaming={isStreaming} selectedModel={selectedModel} />
       </div>
     </div>
