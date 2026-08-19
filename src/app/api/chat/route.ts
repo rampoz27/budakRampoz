@@ -17,6 +17,7 @@ interface ChatRequestBody {
   currentDateTime?: string;
   shiftContext?: string;
   accountsContext?: string;
+  historyContext?: string;
 }
 
 const BASE_SYSTEM_PROMPT =
@@ -34,7 +35,8 @@ function buildSystemPrompt(
   standInFor?: string,
   currentDateTime?: string,
   shiftContext?: string,
-  accountsContext?: string
+  accountsContext?: string,
+  historyContext?: string
 ): string {
   let prompt = BASE_SYSTEM_PROMPT;
   prompt += hasLiveSearch
@@ -42,6 +44,10 @@ function buildSystemPrompt(
     : '\n\nYou do NOT have real-time internet access, live data feeds, or the ability to browse the web. If asked about anything that changes over time and that you cannot verify from your training data or the context provided to you below — exchange rates, stock/crypto prices, current news, sports scores, weather, or any other live figure — do NOT fabricate a specific number, source, or date to sound authoritative. Say plainly that you don\'t have real-time access and suggest the user switch to the "AI Search Agent" model (in the dropdown, or by typing "search agent, ...") which actually searches the live web.';
   if (currentDateTime) {
     prompt += `\n\nThe current date and time (in the user's local timezone) is: ${currentDateTime}. Use this whenever the user asks about today's date, the current time, day of the week, or anything time-relative ("in 3 days", "how long until...", etc.) — your training data has a cutoff, so always trust this value over any date you might otherwise assume.`;
+  }
+  if (historyContext) {
+    prompt +=
+      `\n\nThis conversation has gotten long, so only the most recent messages are included below in full — everything before that has been condensed into the summary below. Treat it as genuine earlier context (topics discussed, decisions made, things you already told the user), not as a lesser or less-trustworthy source. It may not capture every small detail from that earlier part of the conversation, since it's a condensed summary rather than the verbatim exchange — if the user references something specific from earlier that isn't reflected here, it's reasonable to say you may not have the exact detail rather than guessing:\n\n${historyContext}`;
   }
   if (shiftContext) {
     prompt +=
@@ -574,8 +580,16 @@ function getFallbackCandidates(modelId: string): string[] {
 export async function POST(req: NextRequest) {
   try {
     const body: ChatRequestBody = await req.json();
-    const { modelId, messages, personaSettings, ragContext, currentDateTime, shiftContext, accountsContext } =
-      body;
+    const {
+      modelId,
+      messages,
+      personaSettings,
+      ragContext,
+      currentDateTime,
+      shiftContext,
+      accountsContext,
+      historyContext,
+    } = body;
 
     if (!messages || messages.length === 0) {
       return NextResponse.json({ error: 'No messages provided' }, { status: 400 });
@@ -614,7 +628,8 @@ export async function POST(req: NextRequest) {
             undefined,
             currentDateTime,
             shiftContext,
-            accountsContext
+            accountsContext,
+            historyContext
           );
           await streamModel(modelId, messages, primarySystemPrompt, controller);
           succeeded = true;
@@ -651,7 +666,8 @@ export async function POST(req: NextRequest) {
                 modelId,
                 currentDateTime,
                 shiftContext,
-                accountsContext
+                accountsContext,
+                historyContext
               );
               await streamModel(candidateId, messages, fallbackSystemPrompt, controller);
               actualModelId = candidateId;
