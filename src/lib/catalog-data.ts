@@ -1,6 +1,3 @@
-// PROGRAMMING ERROR MASTER CATALOG (EXPANDED)
-// Rebuild v2: menambahkan 10 tier baru (51-60) di atas katalog 50-tier sebelumnya.
-// Prinsip: jangan hanya hafal nama error; pahami gejala -> penyebab -> mekanisme -> diagnosis -> pencegahan.
 
 export interface CatalogRow {
   id: string;
