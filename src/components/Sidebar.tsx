@@ -31,6 +31,7 @@ const navGroups = [
       { href: '/alarms', label: 'Alarm', icon: 'ClockIcon', badge: null },
       { href: '/accounts', label: 'Rekening', icon: 'CreditCardIcon', badge: null },
       { href: '/learning', label: 'Pembelajaran AI', icon: 'AcademicCapIcon', badge: null },
+      { href: '/katalog-debug', label: 'Katalog Debug', icon: 'BookOpenIcon', badge: null },
     ],
   },
   {
@@ -59,7 +60,6 @@ export default function Sidebar({ collapsed, onToggleCollapse, activeRoute }: Si
     fetchConversations(4)
       .then(setRecentConversations)
       .catch(() => setRecentConversations([]));
-
     fetchProjects()
       .then((rows) => setProjectCount(rows.length))
       .catch(() => setProjectCount(null));
@@ -90,7 +90,6 @@ export default function Sidebar({ collapsed, onToggleCollapse, activeRoute }: Si
           </button>
         )}
       </div>
-
       {/* New Chat Button */}
       <div className="px-3 py-3 flex-shrink-0">
         <Link
@@ -102,7 +101,6 @@ export default function Sidebar({ collapsed, onToggleCollapse, activeRoute }: Si
           {!collapsed && <span>New Chat</span>}
         </Link>
       </div>
-
       {/* Nav Groups */}
       <nav className="flex-1 overflow-y-auto px-2 pb-2">
         {navGroups.map((group) => (
@@ -152,7 +150,6 @@ export default function Sidebar({ collapsed, onToggleCollapse, activeRoute }: Si
             })}
           </div>
         ))}
-
         {/* Recent Conversations */}
         {!collapsed && recentConversations.length > 0 && (
           <div>
@@ -175,7 +172,6 @@ export default function Sidebar({ collapsed, onToggleCollapse, activeRoute }: Si
           </div>
         )}
       </nav>
-
       {/* Bottom: User Profile */}
       <div className="border-t border-border p-3 flex-shrink-0">
         {collapsed ? (
