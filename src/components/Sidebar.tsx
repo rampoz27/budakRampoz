@@ -32,6 +32,7 @@ const navGroups = [
       { href: '/accounts', label: 'Rekening', icon: 'CreditCardIcon', badge: null },
       { href: '/learning', label: 'Pembelajaran AI', icon: 'AcademicCapIcon', badge: null },
       { href: '/katalog-debug', label: 'Katalog Debug', icon: 'BookOpenIcon', badge: null },
+      { href: '/data-compare', label: 'Data Compare', icon: 'TableCellsIcon', badge: null },
     ],
   },
   {
