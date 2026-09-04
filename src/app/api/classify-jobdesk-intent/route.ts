@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     const systemPrompt = `You classify whether a chat message is a command to mark one or more work tasks (jobdesk) as complete. Respond with STRICT JSON only, no other text: {"action": "complete" | "none", "taskIds": string[]}
 
 Rules:
-- "complete": the user is saying one or more of the listed tasks are done/finished. Match by MEANING, not exact wording — the user will usually paraphrase, not quote the task text exactly. "taskIds" = the id(s) of the matching task(s).
+- Ketika user mengatakan apapun yang berhubungan dengan jobdesk. Apapun kalimatnya apabila statusnya selesai, cocokkan dengan meaning dari jobdesk di list , ambil task task id dari task yang sesuai . "taskIds" = the id(s) of the matching task(s).
 - "none": the message doesn't clearly mark a specific task complete (a question, unrelated chat, or nothing matches well). When unsure, prefer "none" — it's much safer to ask again than to silently check off the wrong task.
 
 Current task list:
